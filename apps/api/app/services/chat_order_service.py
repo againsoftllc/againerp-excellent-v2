@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import secrets
 from datetime import datetime
 from decimal import Decimal
 from typing import Any, Optional
@@ -14,7 +15,6 @@ from app.models.commerce_order_item import CommerceOrderItem
 from app.models.storefront_cart import StorefrontCart, StorefrontCartItem
 from app.services.ecommerce.storefront_cart_service import CartError, StorefrontCartService
 from app.schemas.storefront import StorefrontCheckoutCreate
-from app.security import new_session_token
 
 FREE_SHIPPING_THRESHOLD = Decimal("2000")
 SHIPPING_RATES = {"standard": Decimal("80"), "express": Decimal("150")}
@@ -33,7 +33,7 @@ def _shipping_amount(method: str, subtotal: Decimal) -> Decimal:
 
 
 def _order_number() -> str:
-    return f"ORD-{new_session_token()[:8].upper()}"
+    return "ORD-" + "".join(secrets.choice("ABCDEFGHJKLMNPQRSTUVWXYZ23456789") for _ in range(8))  # letters/digits only (no - or _), no look-alike 0/O/1/I
 
 
 def _product_row_dict(row: CatalogProduct) -> dict[str, Any]:

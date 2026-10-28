@@ -1,4 +1,4 @@
-"""Storefront wishlist API — website_wishlists / website_wishlist_items."""
+"""Storefront wishlist and saved-for-later APIs — website_wishlists / website_wishlist_items."""
 
 from __future__ import annotations
 
@@ -17,9 +17,8 @@ from app.models.website_wishlist import WebsiteWishlist
 from app.services.ecommerce.website_wishlist_service import WishlistError, WebsiteWishlistService
 from app.services.ecommerce.storefront_feature_flags import require_storefront_flag
 
-router = APIRouter(prefix="/wishlist", tags=["storefront-wishlist"])
-
 WISHLIST_HEADER = "X-Wishlist-Token"
+SAVED_HEADER = "X-Saved-Token"
 STOREFRONT_CACHE = "private, no-store"
 
 
@@ -61,55 +60,63 @@ def _customer_id(ctx: Optional[CustomerAuthContext]) -> Optional[str]:
     return ctx[2].id
 
 
-def get_wishlist_context(
-    response: Response,
-    db: Session = Depends(get_db),
-    x_wishlist_token: Optional[str] = Header(default=None, alias=WISHLIST_HEADER),
-    ctx: Optional[CustomerAuthContext] = Depends(get_optional_storefront_customer),
-) -> WebsiteWishlist:
-    require_storefront_flag("wishlist")
-    response.headers["Cache-Control"] = STOREFRONT_CACHE
-    return _service(db).get_or_create(
-        wishlist_token=x_wishlist_token,
-        customer_id=_customer_id(ctx),
-    )
+def _make_router(prefix: str, token_header: str, kind: str, tag: str) -> APIRouter:
+    """The list endpoints for one kind of list (the wishlist, or saved-for-later)."""
+    r = APIRouter(prefix=prefix, tags=[tag])
+
+    def get_list_context(
+        response: Response,
+        db: Session = Depends(get_db),
+        token: Optional[str] = Header(default=None, alias=token_header),
+        ctx: Optional[CustomerAuthContext] = Depends(get_optional_storefront_customer),
+    ) -> WebsiteWishlist:
+        require_storefront_flag("wishlist")
+        response.headers["Cache-Control"] = STOREFRONT_CACHE
+        return _service(db).get_or_create(
+            wishlist_token=token,
+            customer_id=_customer_id(ctx),
+            kind=kind,
+        )
+
+    @r.get("", response_model=WishlistResponse)
+    def get_list(wishlist: WebsiteWishlist = Depends(get_list_context), db: Session = Depends(get_db)) -> WishlistResponse:
+        return WishlistResponse(data=WishlistRead(**_service(db).build_read(wishlist)))
+
+    @r.post("/items", response_model=WishlistResponse)
+    def add_item(
+        payload: WishlistItemCreate,
+        wishlist: WebsiteWishlist = Depends(get_list_context),
+        db: Session = Depends(get_db),
+    ) -> WishlistResponse:
+        try:
+            wishlist = _service(db).add_product(wishlist, payload.product_id)
+        except WishlistError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        return WishlistResponse(data=WishlistRead(**_service(db).build_read(wishlist)))
+
+    @r.delete("/items/{product_id}", response_model=WishlistResponse)
+    def remove_item(
+        product_id: str,
+        wishlist: WebsiteWishlist = Depends(get_list_context),
+        db: Session = Depends(get_db),
+    ) -> WishlistResponse:
+        try:
+            wishlist = _service(db).remove_product(wishlist, product_id)
+        except WishlistError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        return WishlistResponse(data=WishlistRead(**_service(db).build_read(wishlist)))
+
+    @r.delete("", response_model=WishlistResponse)
+    def clear_list(
+        wishlist: WebsiteWishlist = Depends(get_list_context),
+        db: Session = Depends(get_db),
+    ) -> WishlistResponse:
+        wishlist = _service(db).clear(wishlist)
+        return WishlistResponse(data=WishlistRead(**_service(db).build_read(wishlist)))
+
+    return r
 
 
-@router.get("", response_model=WishlistResponse)
-def get_wishlist(wishlist: WebsiteWishlist = Depends(get_wishlist_context), db: Session = Depends(get_db)) -> WishlistResponse:
-    return WishlistResponse(data=WishlistRead(**_service(db).build_read(wishlist)))
-
-
-@router.post("/items", response_model=WishlistResponse)
-def add_wishlist_item(
-    payload: WishlistItemCreate,
-    wishlist: WebsiteWishlist = Depends(get_wishlist_context),
-    db: Session = Depends(get_db),
-) -> WishlistResponse:
-    try:
-        wishlist = _service(db).add_product(wishlist, payload.product_id)
-    except WishlistError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
-    return WishlistResponse(data=WishlistRead(**_service(db).build_read(wishlist)))
-
-
-@router.delete("/items/{product_id}", response_model=WishlistResponse)
-def remove_wishlist_item(
-    product_id: str,
-    wishlist: WebsiteWishlist = Depends(get_wishlist_context),
-    db: Session = Depends(get_db),
-) -> WishlistResponse:
-    try:
-        wishlist = _service(db).remove_product(wishlist, product_id)
-    except WishlistError as exc:
-        raise HTTPException(status_code=404, detail=str(exc)) from exc
-    return WishlistResponse(data=WishlistRead(**_service(db).build_read(wishlist)))
-
-
-@router.delete("", response_model=WishlistResponse)
-def clear_wishlist(
-    wishlist: WebsiteWishlist = Depends(get_wishlist_context),
-    db: Session = Depends(get_db),
-) -> WishlistResponse:
-    wishlist = _service(db).clear(wishlist)
-    return WishlistResponse(data=WishlistRead(**_service(db).build_read(wishlist)))
+router = _make_router("/wishlist", WISHLIST_HEADER, "wishlist", "storefront-wishlist")
+# "Save" on the product page: a separate save-for-later list, same rules as the wishlist.
+saved_router = _make_router("/saved", SAVED_HEADER, "saved", "storefront-saved")

@@ -186,3 +186,49 @@ def get_happy_hour(
     if not row:
         raise HTTPException(status_code=404, detail="Happy Hour not found")
     return StorefrontHappyHourResponse(data=_detail(db, row))
+
+
+class StorefrontHappyHourSummary(BaseModel):
+    slug: str
+    title: str
+    subtitle: Optional[str] = None
+    status: str
+    startDateISO: str
+    endDateISO: str
+
+
+class StorefrontHappyHourListResponse(BaseModel):
+    data: List[StorefrontHappyHourSummary]
+
+
+@router.get("/happy-hours", response_model=StorefrontHappyHourListResponse)
+def list_happy_hours(response: Response, db: Session = Depends(get_db)) -> StorefrontHappyHourListResponse:
+    """Public (not draft / disabled / ended) campaigns — lets a storefront pick one by slug."""
+    _set_cache(response)
+    now = datetime.utcnow()
+    rows = db.query(MarketingHappyHour).order_by(MarketingHappyHour.sort_order.asc(), MarketingHappyHour.starts_at.desc()).all()
+    return StorefrontHappyHourListResponse(
+        data=[
+            StorefrontHappyHourSummary(
+                slug=row.slug,
+                title=row.title,
+                subtitle=row.subtitle,
+                status=row.status,
+                startDateISO=_fmt_iso(row.starts_at),
+                endDateISO=_fmt_iso(row.ends_at),
+            )
+            for row in rows
+            if _is_public(row, now)
+        ]
+    )
+
+
+@router.get("/happy-hours/{slug}", response_model=StorefrontHappyHourResponse)
+def get_happy_hour_by_slug(slug: str, response: Response, db: Session = Depends(get_db)) -> StorefrontHappyHourResponse:
+    """One public campaign by slug (the storefront's homepage deals can point at any of them)."""
+    _set_cache(response)
+    opts = joinedload(MarketingHappyHour.sections).joinedload(MarketingHappyHourSection.deals)
+    row = db.query(MarketingHappyHour).options(opts).filter(MarketingHappyHour.slug == slug).first()
+    if not row or not _is_public(row, datetime.utcnow()):
+        raise HTTPException(status_code=404, detail="Happy Hour not found")
+    return StorefrontHappyHourResponse(data=_detail(db, row))

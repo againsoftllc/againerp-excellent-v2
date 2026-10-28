@@ -7,10 +7,13 @@ from datetime import datetime
 from decimal import Decimal
 from typing import Optional
 
-from sqlalchemy import DateTime, ForeignKey, Numeric, String, UniqueConstraint, func
+from sqlalchemy import DateTime, ForeignKey, Numeric, String, UniqueConstraint, func, text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
-from app.database import Base
+from app.database import Base, engine
+
+# A shopper has one list of each kind: the wishlist, and "saved" (save for later).
+WISHLIST_KINDS = ("wishlist", "saved")
 
 
 class WebsiteWishlist(Base):
@@ -24,6 +27,7 @@ class WebsiteWishlist(Base):
         nullable=True,
         index=True,
     )
+    kind: Mapped[str] = mapped_column(String(16), nullable=False, default="wishlist", server_default="wishlist", index=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(
         DateTime,
@@ -64,3 +68,12 @@ class WebsiteWishlistItem(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, server_default=func.now())
 
     wishlist: Mapped["WebsiteWishlist"] = relationship("WebsiteWishlist", back_populates="items")
+
+
+def ensure_website_wishlist_columns() -> None:
+    """Add website_wishlists.kind on existing DBs (no Alembic in this repo)."""
+    with engine.begin() as conn:
+        conn.execute(
+            text("ALTER TABLE website_wishlists ADD COLUMN IF NOT EXISTS kind VARCHAR(16) NOT NULL DEFAULT 'wishlist'")
+        )
+        conn.execute(text("CREATE INDEX IF NOT EXISTS ix_website_wishlists_kind ON website_wishlists (kind)"))

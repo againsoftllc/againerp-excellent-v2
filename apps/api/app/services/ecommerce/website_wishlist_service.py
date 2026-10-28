@@ -1,4 +1,8 @@
-"""Storefront wishlist service — guest token + optional customer binding."""
+"""Storefront wishlist service — guest token + optional customer binding.
+
+The same tables hold two lists per shopper, told apart by `kind`: the
+wishlist and "saved" (save for later).
+"""
 
 from __future__ import annotations
 
@@ -30,22 +34,23 @@ class WebsiteWishlistService:
         *,
         wishlist_token: Optional[str] = None,
         customer_id: Optional[str] = None,
+        kind: str = "wishlist",
     ) -> WebsiteWishlist:
         if customer_id:
             row = (
                 self._db.query(WebsiteWishlist)
-                .filter(WebsiteWishlist.customer_id == customer_id)
+                .filter(WebsiteWishlist.customer_id == customer_id, WebsiteWishlist.kind == kind)
                 .first()
             )
             if row:
                 if wishlist_token and row.wishlist_token != wishlist_token:
-                    guest = self._find_by_token(wishlist_token)
+                    guest = self._find_by_token(wishlist_token, kind)
                     if guest and guest.id != row.id:
                         self.merge_guest_into(guest, row)
                 return row
 
         if wishlist_token:
-            row = self._find_by_token(wishlist_token)
+            row = self._find_by_token(wishlist_token, kind)
             if row:
                 if customer_id and not row.customer_id:
                     row.customer_id = customer_id
@@ -55,16 +60,17 @@ class WebsiteWishlistService:
         row = WebsiteWishlist(
             wishlist_token=new_session_token(),
             customer_id=customer_id,
+            kind=kind,
         )
         self._db.add(row)
         self._db.commit()
         self._db.refresh(row)
         return row
 
-    def _find_by_token(self, token: str) -> Optional[WebsiteWishlist]:
+    def _find_by_token(self, token: str, kind: str = "wishlist") -> Optional[WebsiteWishlist]:
         return (
             self._db.query(WebsiteWishlist)
-            .filter(WebsiteWishlist.wishlist_token == token)
+            .filter(WebsiteWishlist.wishlist_token == token, WebsiteWishlist.kind == kind)
             .first()
         )
 

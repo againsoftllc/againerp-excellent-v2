@@ -23,7 +23,7 @@ EMAIL_DEPARTMENTS: tuple[str, ...] = (
     "returns",
 )
 
-SOCIAL_NETWORKS: tuple[str, ...] = ("facebook", "instagram", "youtube")
+SOCIAL_NETWORKS: tuple[str, ...] = ("facebook", "instagram", "youtube", "tiktok")
 
 HEADER_ACTION_IDS: tuple[str, ...] = (
     "offers",
