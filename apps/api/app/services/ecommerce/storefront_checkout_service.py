@@ -252,6 +252,11 @@ class StorefrontCheckoutService:
 
         if not is_shipping_method_allowed(self._db, request.shipping_method):
             errors.append("Selected shipping method is not available")
+        elif request.shipping_method.strip().lower() == "express":
+            # Next-business-day express delivery only covers Dhaka.
+            place = (request.shipping.region or request.shipping.city or "").strip().lower()
+            if place != "dhaka":
+                errors.append("Express Delivery is available in Dhaka only")
 
         return errors
 
