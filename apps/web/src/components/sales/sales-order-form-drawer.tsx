@@ -6177,6 +6177,15 @@ export function SalesOrderFormDrawer({
                   </AgainFormField>
                 </div>
 
+                {order?.pickupPoint ? (
+                  <div>
+                    <AgainFormGroupTitle>Store pickup</AgainFormGroupTitle>
+                    <AgainFormField label="Collect from">
+                      <div className="px-1 py-1.5 text-[13px] font-medium">{order.pickupPoint}</div>
+                    </AgainFormField>
+                  </div>
+                ) : null}
+
                 <div>
                   <AgainFormGroupTitle>Note</AgainFormGroupTitle>
                   <AgainFormField label="Internal note">

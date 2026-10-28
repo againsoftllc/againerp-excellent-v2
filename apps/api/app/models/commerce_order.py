@@ -91,6 +91,8 @@ class CommerceOrder(Base):
     shipping_amount: Mapped[Decimal] = mapped_column(Numeric(14, 2), nullable=False, default=0)
     grand_total: Mapped[Decimal] = mapped_column(Numeric(14, 2), nullable=False, default=0)
     notes: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    # Collection counter chosen at checkout for Store Pickup orders (branch name, e.g. "IDB Branch").
+    pickup_point: Mapped[Optional[str]] = mapped_column(String(160), nullable=True)
     # Dropship manual 1688 fulfillment
     supplier_order_status: Mapped[str] = mapped_column(
         String(20), nullable=False, default="pending", index=True

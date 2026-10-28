@@ -175,6 +175,18 @@ def parse_pickup_points(raw: Optional[str]) -> List[Dict[str, str]]:
     return out or [dict(p) for p in DEFAULT_PICKUP_POINTS]
 
 
+def pickup_point_label(db: Session, chosen: Optional[str]) -> Optional[str]:
+    """Branch name for what the storefront sent (a counter key or its label); the raw text if unknown."""
+    text = (chosen or "").strip()
+    if not text:
+        return None
+    wanted = text.lower()
+    for point in parse_pickup_points(load_shipping_settings(db).get("shipping.pickup_points")):
+        if wanted in {str(point.get("key", "")).lower(), str(point.get("label", "")).lower()}:
+            return str(point.get("label") or text)
+    return text
+
+
 def _sub_district_overrides(raw: Optional[str]) -> Dict[str, List[str]]:
     text = (raw or "").strip()
     if not text or not text.startswith("{"):

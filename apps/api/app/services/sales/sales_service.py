@@ -620,6 +620,7 @@ class SalesService:
             delivery_status="pending",
             order_date=order_date,
             notes=self._pack_storefront_payment_notes(base_notes, commerce_order),
+            pickup_point=getattr(commerce_order, "pickup_point", None),
             confirmed_at=datetime.utcnow(),
         )
         self._db.add(sales_order)

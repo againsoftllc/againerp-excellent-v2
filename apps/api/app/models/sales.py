@@ -209,6 +209,8 @@ class SalesOrder(Base):
     expected_date: Mapped[Optional[date]] = mapped_column(Date, nullable=True)
     sales_rep: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
     notes: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    # Collection counter chosen at checkout for Store Pickup orders (branch name, e.g. "IDB Branch").
+    pickup_point: Mapped[Optional[str]] = mapped_column(String(160), nullable=True)
     payment_terms: Mapped[Optional[str]] = mapped_column(String(32), nullable=True)
     sale_stage: Mapped[str] = mapped_column(String(16), nullable=False, default="final")
     invoice_scheme: Mapped[str] = mapped_column(String(16), nullable=False, default="standard")

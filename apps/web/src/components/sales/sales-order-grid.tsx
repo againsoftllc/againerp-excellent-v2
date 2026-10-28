@@ -86,6 +86,7 @@ const COLUMN_KEYS = [
   "email",
   "city",
   "branch",
+  "pickupPoint",
   "items",
   "amount",
   "paid",
@@ -114,6 +115,7 @@ const COLUMN_LABELS: Record<ColumnKey, string> = {
   email: "Email",
   city: "City",
   branch: "Warehouse",
+  pickupPoint: "Pickup branch",
   items: "Items",
   amount: "Amount",
   paid: "Paid",
@@ -141,6 +143,7 @@ const DEFAULT_VISIBLE: Record<ColumnKey, boolean> = {
   email: false,
   city: false,
   branch: true,
+  pickupPoint: true,
   items: true,
   amount: true,
   paid: true,
@@ -641,6 +644,22 @@ export const SalesOrderGrid = forwardRef<SalesOrderGridHandle, Props>(function S
       });
 
     if (visibleCols.branch) cols.push({ field: "branch", headerName: "Warehouse", width: 110 });
+
+    if (visibleCols.pickupPoint)
+      cols.push({
+        colId: "pickupPoint",
+        headerName: "Pickup branch",
+        width: 140,
+        valueGetter: (p) => p.data?.pickupPoint || "—",
+        cellRenderer: (p: ICellRendererParams<Order>) =>
+          p.data?.pickupPoint ? (
+            <span className="rounded bg-indigo-50 px-1.5 py-0.5 text-[11px] font-medium text-indigo-700">
+              {p.data.pickupPoint}
+            </span>
+          ) : (
+            <span className="text-muted-foreground">—</span>
+          ),
+      });
 
     if (visibleCols.items)
       cols.push({

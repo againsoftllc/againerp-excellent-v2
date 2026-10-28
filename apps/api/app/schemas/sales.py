@@ -191,6 +191,7 @@ class SalesOrderRead(BaseModel):
     expected_date: Optional[date] = None
     sales_rep: Optional[str] = None
     notes: Optional[str] = None
+    pickup_point: Optional[str] = None
     payment_terms: Optional[str] = None
     sale_stage: str = "final"
     invoice_scheme: str = "standard"

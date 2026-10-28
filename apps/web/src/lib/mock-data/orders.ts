@@ -107,6 +107,8 @@ export type Order = {
   shipmentStatus: ShipmentStatus;
   source: string;
   branch: string;
+  /** Store Pickup orders: the branch the customer collects from (e.g. "IDB Branch"). */
+  pickupPoint?: string;
   assignedStaff?: string;
   priority: "normal" | "high" | "urgent";
   tags: string[];

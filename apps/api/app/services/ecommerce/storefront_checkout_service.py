@@ -41,6 +41,7 @@ from app.services.ecommerce.checkout_payment_availability import (
 )
 from app.services.ecommerce.checkout_shipping_availability import (
     is_shipping_method_allowed,
+    pickup_point_label,
     resolve_shipping_amount,
     shipping_options_payload,
 )
@@ -317,6 +318,11 @@ class StorefrontCheckoutService:
             },
         ]
 
+        pickup_label = (
+            pickup_point_label(self._db, request.pickup_point)
+            if request.shipping_method == "pickup"
+            else None
+        )
         order = CommerceOrder(
             company_id=DEFAULT_COMPANY_ID,
             site_id=site_id,
@@ -353,8 +359,9 @@ class StorefrontCheckoutService:
                 request.notes,
                 request.shipping_method,
                 request.coupon_code,
-                request.pickup_point,
+                pickup_label,
             ),
+            pickup_point=pickup_label,
             timeline_json=dump_json(timeline),
             activities_json=dump_json(activities),
             tags_json=dump_json(

@@ -506,9 +506,11 @@ def _bootstrap() -> None:
             ensure_catalog_product_special_columns,
             ensure_catalog_stock_status_columns,
             ensure_excellent_columns,
+            ensure_pickup_point_columns,
         )
 
         ensure_excellent_columns()
+        ensure_pickup_point_columns()
         ensure_catalog_product_special_columns()
         ensure_catalog_stock_status_columns()
 
@@ -711,9 +713,10 @@ async def lifespan(_app: FastAPI):
     try:
         # Excellent storefront columns — must exist before the first product / checkout request.
         # A brand-new database has no tables yet; _bootstrap() re-runs this after create_all.
-        from scripts.ensure_excellent_extras import ensure_excellent_columns
+        from scripts.ensure_excellent_extras import ensure_excellent_columns, ensure_pickup_point_columns
 
         ensure_excellent_columns()
+        ensure_pickup_point_columns()
     except Exception:
         logger.info("Excellent columns deferred to bootstrap (tables not created yet)")
     try:

@@ -77,3 +77,31 @@ def ensure_excellent_columns() -> None:
     with engine.begin() as conn:
         for stmt in statements:
             conn.execute(text(stmt))
+
+
+def ensure_pickup_point_columns() -> None:
+    """Store Pickup branch on commerce + sales orders, backfilled from the order notes of older orders."""
+    import re
+
+    with engine.begin() as conn:
+        for table in ("commerce_orders", "sales_orders"):
+            conn.execute(text(f"ALTER TABLE {table} ADD COLUMN IF NOT EXISTS pickup_point VARCHAR(160)"))
+
+    from app.database import SessionLocal
+    from app.services.ecommerce.checkout_shipping_availability import pickup_point_label
+
+    pattern = re.compile(r"Pickup point:\s*([^\n·]+)")
+    db = SessionLocal()
+    try:
+        for table in ("commerce_orders", "sales_orders"):
+            rows = db.execute(
+                text(f"SELECT id, notes FROM {table} WHERE pickup_point IS NULL AND notes LIKE '%Pickup point:%'")
+            ).all()
+            for row_id, notes in rows:
+                match = pattern.search(notes or "")
+                label = pickup_point_label(db, match.group(1).strip()) if match else None
+                if label:
+                    db.execute(text(f"UPDATE {table} SET pickup_point = :p WHERE id = :i"), {"p": label, "i": row_id})
+        db.commit()
+    finally:
+        db.close()

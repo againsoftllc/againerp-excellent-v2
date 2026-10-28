@@ -322,6 +322,7 @@ def _order_read(db: Session, order: SalesOrder) -> SalesOrderRead:
         expected_date=order.expected_date,
         sales_rep=order.sales_rep,
         notes=notes or order.notes,
+        pickup_point=order.pickup_point,
         payment_terms=order.payment_terms,
         sale_stage=order.sale_stage or "final",
         invoice_scheme=order.invoice_scheme or "standard",

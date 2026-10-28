@@ -576,6 +576,8 @@ function baseOrderFields(
     customer_name: string | null;
     sales_rep: string | null;
     notes: string | null;
+    /** Store Pickup branch picked at checkout (website orders). */
+    pickup_point?: string | null;
     subtotal: string | number;
     tax_total: string | number;
     discount_total: string | number;
@@ -679,6 +681,7 @@ function baseOrderFields(
     shippingAmount,
     grandTotal,
     notes: stripOrderLineLayout(row.notes) || undefined,
+    pickupPoint: row.pickup_point?.trim() || undefined,
     timeline: [],
     activities: [],
     comments: [],
