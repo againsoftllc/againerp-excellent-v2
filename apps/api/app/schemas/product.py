@@ -47,7 +47,7 @@ class ProductBase(BaseModel):
     tax_rate: Optional[Decimal] = Field(default=None, ge=0, le=100)
     tax_type: str = Field(default="exclusive", pattern="^(inclusive|exclusive)$")
     location_ids: List[str] = Field(default_factory=list)
-    stock_status: Optional[str] = Field(default=None, pattern="^(in_stock|out_of_stock|pre_order|coming_soon)?$")
+    stock_status: Optional[str] = Field(default=None, pattern="^[a-z][a-z0-9_]{1,39}$|^$")
     status: str = Field(default="draft", pattern="^(draft|published|unlisted|archived)$")
     product_type: str = Field(default="simple", pattern="^(simple|variable|digital|combo)$")
     visibility: str = Field(default="public", pattern="^(public|private)$")
@@ -115,7 +115,7 @@ class ProductUpdate(BaseModel):
     tax_rate: Optional[Decimal] = Field(default=None, ge=0, le=100)
     tax_type: Optional[str] = Field(default=None, pattern="^(inclusive|exclusive)?$")
     location_ids: Optional[List[str]] = None
-    stock_status: Optional[str] = Field(default=None, pattern="^(in_stock|out_of_stock|pre_order|coming_soon)?$")
+    stock_status: Optional[str] = Field(default=None, pattern="^[a-z][a-z0-9_]{1,39}$|^$")
     status: Optional[str] = Field(default=None, pattern="^(draft|published|unlisted|archived)$")
     product_type: Optional[str] = Field(default=None, pattern="^(simple|variable|digital|combo)$")
     visibility: Optional[str] = Field(default=None, pattern="^(public|private)$")

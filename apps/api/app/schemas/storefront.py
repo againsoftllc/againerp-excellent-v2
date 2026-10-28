@@ -21,16 +21,31 @@ class StorefrontProductRead(BaseModel):
     stock_status: Optional[str] = None
     brand: str
     category: str
+    category_slug: str = ""
     thumbnail: Optional[str] = None
     in_stock: bool
+    # How the shop should present this product's stock status, taken from the
+    # client-configured row in catalog_stock_statuses.
+    availability_label: Optional[str] = None
+    availability_color: Optional[str] = None
+    sellable: bool = True
+    # Resolved "Call for Price" number — the product's own override, else its
+    # stock status' default. None unless this product's status has one set.
+    contact_phone: Optional[str] = None
     short_description: Optional[str] = None
-    updated_at: Optional[datetime] = None
     featured: bool = False
     sku: Optional[str] = None
+    # Manufacturer model number — distinct from the internal SKU.
+    model: Optional[str] = None
+    # when the listing or its catalog product last changed (sitemap lastmod)
+    updated_at: Optional[datetime] = None
     rating: Optional[float] = None
     review_count: Optional[int] = None
     # Filterable spec values keyed by attribute code (e.g. form_factor → mid_tower).
     filter_attributes: dict[str, str] = Field(default_factory=dict)
+    # True when the shopper must choose a variant before this can be bought, so
+    # a listing card sends them to the product page instead of straight to cart.
+    has_options: bool = False
 
 
 class StorefrontReviewRead(BaseModel):
@@ -111,6 +126,8 @@ class StorefrontVariantRead(BaseModel):
     price: Decimal
     stock: int
     image_url: Optional[str] = None
+    gallery: List[str] = Field(default_factory=list)
+    video_urls: List[str] = Field(default_factory=list)
     is_default: bool = False
     options: List[StorefrontVariantOptionRead] = Field(default_factory=list)
     weight_kg: Optional[float] = None
@@ -121,18 +138,37 @@ class StorefrontPriceTierRead(BaseModel):
     price_bdt: Decimal
 
 
+class StorefrontPageBannerRead(BaseModel):
+    id: str
+    image_url: str
+    link_href: str
+    alt_text: str
+
+
+class StorefrontCategoryCrumbRead(BaseModel):
+    name: str
+    slug: str
+
+
 class StorefrontProductDetailRead(StorefrontProductRead):
     full_description: Optional[str] = None
     seo_title: Optional[str] = None
     seo_description: Optional[str] = None
+    # Catalog → Product → Warranty (e.g. "3 Years Official Warranty").
+    warranty: Optional[str] = None
     brand_id: Optional[str] = None
     category_id: Optional[str] = None
+    # Ancestor categories from root to immediate parent, excluding the
+    # product's own `category`/`category_slug` — lets the PDP breadcrumb
+    # show the full tree instead of just the one leaf category.
+    category_ancestors: List[StorefrontCategoryCrumbRead] = Field(default_factory=list)
     specifications: List[StorefrontSpecGroupRead] = Field(default_factory=list)
     gallery: List[str] = Field(default_factory=list)
     video_urls: List[str] = Field(default_factory=list)
     seller_info: Optional[StorefrontSellerInfoRead] = None
     source_url: Optional[str] = None
     variants: List[StorefrontVariantRead] = Field(default_factory=list)
+    sale_ends_at: Optional[datetime] = None
     sales_volume: Optional[int] = None
     rating: Optional[float] = None
     review_count: Optional[int] = None
@@ -140,11 +176,16 @@ class StorefrontProductDetailRead(StorefrontProductRead):
     weight_kg: Optional[float] = None
     reviews: List[StorefrontReviewRead] = Field(default_factory=list)
     qa: List[StorefrontQaRead] = Field(default_factory=list)
+    page_banners: List[StorefrontPageBannerRead] = Field(default_factory=list)
 
 
 class StorefrontProductDetailResponse(BaseModel):
     data: StorefrontProductDetailRead
+    # "More to love" — same category, ordered ones first, widening to the brand.
     related: List[StorefrontProductRead] = Field(default_factory=list)
+    # "Frequently Paired" — chosen by hand in the product form. When empty the
+    # shop shows an auto pick under the "Related Product" heading instead.
+    paired: List[StorefrontProductRead] = Field(default_factory=list)
 
 
 class StorefrontReviewListMeta(BaseModel):
@@ -230,6 +271,7 @@ class StorefrontCartItemRead(BaseModel):
     quantity: int
     tax_amount: Decimal = Decimal("0")
     line_total: Decimal = Decimal("0")
+    is_digital: bool = False
 
 
 class StorefrontCartIssueRead(BaseModel):
@@ -300,17 +342,21 @@ class StorefrontCheckoutAddress(BaseModel):
 
 
 class StorefrontCheckoutCreate(BaseModel):
-    # many shoppers give only a mobile number: email and last name are optional
     email: str = Field(default="", max_length=255)
     first_name: str = Field(min_length=1, max_length=100)
     last_name: str = Field(default="", max_length=100)
     phone: str = Field(min_length=3, max_length=50)
-    address: str = Field(min_length=3, max_length=500)
+    # Not required at the schema level — a digital-only order skips address
+    # entirely (see StorefrontCheckoutService._validate_address); requiredness
+    # for a physical order is enforced there instead.
+    address: str = Field(default="", max_length=500)
     district: str = Field(default="", max_length=100)
     postal_code: str = Field(default="", max_length=20)
     notes: Optional[str] = None
     payment_method: str = Field(default="cod", max_length=50)
     shipping_method: str = Field(default="standard", max_length=50)
+    # Which counter the shopper will collect from, when they chose Pickup.
+    pickup_point: Optional[str] = Field(default=None, max_length=120)
     billing_same_as_shipping: bool = True
     billing_address: Optional[str] = None
     billing_city: Optional[str] = None
@@ -378,8 +424,18 @@ class StorefrontEmiBankRead(BaseModel):
     months: List[int] = []
 
 
+class StorefrontPickupPointRead(BaseModel):
+    key: str
+    label: str
+    address: str = ""
+    phone: str = ""
+    map_url: str = ""
+
+
 class StorefrontCheckoutOptionsRead(BaseModel):
     shipping_methods: List[StorefrontShippingOptionRead]
+    pickup_points: List[StorefrontPickupPointRead] = []
+    sub_districts: dict[str, List[str]] = {}
     payment_methods: List[StorefrontPaymentOptionRead]
     zones: List[str] = []
     inside_zones: List[str] = []
@@ -392,6 +448,9 @@ class StorefrontCheckoutOptionsRead(BaseModel):
     tax_rate_percent: Decimal = Decimal("0")
     tax_label: str = "VAT"
     tax_included_in_price: bool = False
+    tax_shipping_taxable: bool = False
+    checkout_notice_enabled: bool = False
+    checkout_notice_text: str = ""
 
 
 class StorefrontCheckoutOptionsResponse(BaseModel):

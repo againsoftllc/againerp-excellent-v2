@@ -213,3 +213,10 @@ def delete_offer(
         raise HTTPException(status_code=404, detail="Offer not found")
     db.delete(row)
     db.commit()
+
+
+def disable_offer_deal_by_slug(db: Session, offer_id: str, product_slug: str) -> None:
+    """No-op: offer campaigns here have no per-deal quota rows (Excellent-only table).
+
+    Kept so storefront_checkout_service._consume_special_quota can call it."""
+    return None

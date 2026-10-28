@@ -17,6 +17,7 @@ from app.security import new_session_token
 from app.services.ecommerce.ecommerce_item_service import (
     EcommerceItemService,
     _resolve_storefront_in_stock,
+    stock_status_flags,
 )
 from app.services.ecommerce.checkout_tax_availability import (
     tax_is_included_in_price,
@@ -48,6 +49,40 @@ class CartLineSnapshot:
     in_stock: bool
     available_qty: int
     track_quantity: bool
+    # The configured status code, so the cart can tell "out of stock" from
+    # "pre-order" — both report in_stock=False but only one blocks ordering.
+    stock_status: Optional[str] = None
+
+
+def _first_gallery_image(raw: Optional[str]) -> Optional[str]:
+    """First URL in a variant's `gallery_json`, or None if it's empty/invalid."""
+    if not raw:
+        return None
+    try:
+        data = json.loads(raw)
+    except (TypeError, ValueError):
+        return None
+    if not isinstance(data, list):
+        return None
+    for item in data:
+        if isinstance(item, str) and item.strip():
+            return item.strip()
+    return None
+
+
+def _status_allows_order(snapshot: "CartLineSnapshot") -> bool:
+    """Whether this line may be ordered.
+
+    A configured stock status is the authority — its `sellable` flag is what the
+    storefront API already shows the shopper. Only "auto by quantity" falls back
+    to raw stock. Keying this off `in_stock` alone rejected pre-orders, which are
+    deliberately in_stock=False yet sellable.
+    """
+    code = (snapshot.stock_status or "").strip().lower()
+    row = stock_status_flags(code) if code else None
+    if row is not None:
+        return bool(row.sellable)
+    return bool(snapshot.in_stock)
 
 
 @dataclass(frozen=True)
@@ -172,6 +207,7 @@ class StorefrontCartService:
         compare_at = ec.compare_at_price
         variant_label: Optional[str] = None
         sku_snapshot = view.slug
+        thumbnail = view.thumbnail
         # Storefront stock follows catalog Manage Stock / Stock Status only —
         # warehouse inventory is not used for Buy Now / cart availability.
         available_qty = view.stock
@@ -187,9 +223,40 @@ class StorefrontCartService:
                 track_quantity=view.track_quantity,
                 stock_status=view.stock_status,
             )
+            # The option the shopper actually picked (e.g. "Red") gets its own
+            # image on the cart line and order — not the product's default photo.
+            thumbnail = variant.image_url or _first_gallery_image(variant.gallery_json) or thumbnail
 
         # Cash discount = special/selling; Regular (EMI base) = compare_at when higher.
-        cash_price = ec.special_price if ec.special_price is not None else unit_price
+        # Match the storefront: a live special beats the cached column, and an
+        # expired one must not keep discounting the cart.
+        live_special = self._items.active_special_price(ec.catalog_product_id)
+        if live_special is not None:
+            if variant is not None:
+                # A special is set on the product as a whole (anchored to the
+                # default variant), so applying it flat here would price every
+                # variant identically. Keep the same premium/discount this
+                # variant has relative to the default one instead — matching
+                # how the product page prices each variant under the special
+                # (see storefront_products._load_variants' `_variant_delta`).
+                anchor_price = (
+                    self._db.query(CatalogProductVariant.price)
+                    .filter(
+                        CatalogProductVariant.product_id == ec.catalog_product_id,
+                        CatalogProductVariant.status == "published",
+                    )
+                    .order_by(CatalogProductVariant.is_default.desc(), CatalogProductVariant.sort_order.asc())
+                    .limit(1)
+                    .scalar()
+                )
+                delta = Decimal(live_special) - Decimal(anchor_price if anchor_price is not None else unit_price)
+                cash_price = max(Decimal(unit_price) + delta, Decimal("0"))
+            else:
+                cash_price = live_special
+        elif self._items._specials_map().get(ec.catalog_product_id or ""):
+            cash_price = unit_price
+        else:
+            cash_price = ec.special_price if ec.special_price is not None else unit_price
         regular_price = compare_at if compare_at is not None and compare_at > cash_price else cash_price
 
         payment_mode = ""
@@ -208,7 +275,7 @@ class StorefrontCartService:
             product_id=view.id,
             slug=view.slug,
             name=view.name,
-            thumbnail=view.thumbnail,
+            thumbnail=thumbnail,
             unit_price=unit_price,
             compare_at_price=compare_at if compare_at is not None else regular_price,
             variant_id=variant.id if variant else None,
@@ -218,6 +285,7 @@ class StorefrontCartService:
             in_stock=in_stock,
             available_qty=available_qty,
             track_quantity=view.track_quantity,
+            stock_status=view.stock_status,
         )
 
     def _line_key(
@@ -249,7 +317,7 @@ class StorefrontCartService:
             warehouse_id=cart.warehouse_id,
         )
 
-        if not snapshot.in_stock and not self._allow_out_of_stock:
+        if not _status_allows_order(snapshot) and not self._allow_out_of_stock:
             raise CartError("Product out of stock")
 
         key = self._line_key(snapshot.item_id, snapshot.variant_id, snapshot.attributes_json)
@@ -317,7 +385,9 @@ class StorefrontCartService:
         line = self._get_line(cart, line_id)
         self._db.delete(line)
         # A Ready Build's discount is one lump sum for the whole set of parts
-        # it priced — removing any one of them invalidates that number.
+        # it priced — removing any one of them invalidates that number, so it
+        # clears rather than silently overcharging or undercharging on what's
+        # left. The customer can always re-open the build to add it back.
         cart.ready_build_id = None
         cart.ready_build_discount = Decimal("0")
         self._db.commit()
@@ -339,7 +409,13 @@ class StorefrontCartService:
         cart = self.load_cart(cart.id)
         subtotal = sum((line.unit_price * line.quantity for line in cart.items), Decimal("0"))
         try:
-            resolved = resolve_coupon_discount(self._db, code, subtotal)
+            from app.services.marketing.coupon_service import CouponCartLine
+
+            lines = [
+                CouponCartLine(slug=line.slug, unit_price=line.unit_price, quantity=line.quantity)
+                for line in cart.items
+            ]
+            resolved = resolve_coupon_discount(self._db, code, subtotal, lines)
         except CouponError as exc:
             raise CartError(str(exc)) from exc
         if not resolved:
@@ -424,7 +500,9 @@ class StorefrontCartService:
                 continue
 
             stock_blocks = not self._allow_out_of_stock
-            if not snapshot.in_stock:
+            # Same rule as the add guard: a sellable status (pre-order) is fine
+            # even though its in_stock is False.
+            if not _status_allows_order(snapshot):
                 issues.append(
                     CartValidationIssue(
                         cart_item_id=line.id,
@@ -494,7 +572,13 @@ class StorefrontCartService:
             from app.services.marketing.coupon_service import CouponError, resolve_coupon_discount
 
             try:
-                resolved = resolve_coupon_discount(self._db, cart.coupon_code, subtotal)
+                from app.services.marketing.coupon_service import CouponCartLine
+
+                lines = [
+                    CouponCartLine(slug=line.slug, unit_price=line.unit_price, quantity=line.quantity)
+                    for line in cart.items
+                ]
+                resolved = resolve_coupon_discount(self._db, cart.coupon_code, subtotal, lines)
                 if resolved:
                     cart.coupon_code = resolved.code
                     cart.coupon_discount = resolved.amount
@@ -523,8 +607,29 @@ class StorefrontCartService:
             return Decimal("0")
         return STANDARD_SHIPPING
 
+    def _digital_product_ids(self, product_ids: set[str]) -> set[str]:
+        if not product_ids:
+            return set()
+        from app.models.catalog_product import CatalogProduct
+
+        rows = (
+            self._db.query(CatalogProduct.id)
+            .filter(CatalogProduct.id.in_(product_ids), CatalogProduct.product_type == "digital")
+            .all()
+        )
+        return {r[0] for r in rows}
+
+    def is_digital_only_cart(self, cart: StorefrontCart) -> bool:
+        """True only when every line is a digital product — the checkout skips
+        the shipping address/charge and Cash on Delivery for such a cart."""
+        product_ids = {line.product_id for line in cart.items if line.product_id}
+        if not product_ids:
+            return False
+        return self._digital_product_ids(product_ids) == product_ids
+
     def build_read_model(self, cart: StorefrontCart, issues: Optional[List[CartValidationIssue]] = None) -> dict:
         self._recalculate_cart(cart)
+        digital_ids = self._digital_product_ids({line.product_id for line in cart.items if line.product_id})
         subtotal = sum((line.unit_price * line.quantity for line in cart.items), Decimal("0"))
         item_count = sum(line.quantity for line in cart.items)
         discount = cart.coupon_discount or Decimal("0")
@@ -555,6 +660,7 @@ class StorefrontCartService:
                     "quantity": line.quantity,
                     "tax_amount": line.tax_amount,
                     "line_total": line.line_total,
+                    "is_digital": line.product_id in digital_ids,
                 }
                 for line in cart.items
             ],

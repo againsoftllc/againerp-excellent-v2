@@ -1,4 +1,4 @@
-"""Public storefront homepage content (Monarch home sections)."""
+"""Public storefront homepage content (home sections)."""
 
 from __future__ import annotations
 

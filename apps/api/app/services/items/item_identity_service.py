@@ -81,9 +81,15 @@ class ItemIdentityService:
     def resolve_identity(
         self,
         product: CatalogProduct,
+        *,
+        item: Optional[Item] = None,
     ) -> dict[str, str]:
-        """Read identity for API responses — items first, catalog mirror fallback."""
-        item = self._db.get(Item, product.item_id) if product.item_id else None
+        """Read identity for API responses — items first, catalog mirror fallback.
+
+        Pass `item` when the caller already has it loaded so this does not re-fetch it per call.
+        """
+        if item is None and product.item_id:
+            item = self._db.get(Item, product.item_id)
         return self.identity_from_item(product, item)
 
     @staticmethod

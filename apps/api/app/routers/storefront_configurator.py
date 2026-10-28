@@ -12,13 +12,7 @@ from sqlalchemy.orm import Session
 
 from app.database import get_db
 from app.models.storefront_cart import StorefrontCart
-from app.schemas.storefront import (
-    StorefrontCartRead,
-    StorefrontCartResponse,
-    StorefrontProductListMeta,
-    StorefrontProductListResponse,
-)
-from app.services.ttl_cache import TTLCache
+from app.schemas.storefront import StorefrontCartRead, StorefrontCartResponse
 from app.services.ecommerce.storefront_cart_service import CartError, StorefrontCartService
 from app.services.ecommerce.storefront_configurator_service import (
     ConfiguratorError,
@@ -45,7 +39,6 @@ class ConfiguratorCategoryRead(BaseModel):
     catalog_category_slug: str = ""
     # How the shop groups and shows the slot (set in the admin's Tabs & Slots).
     tab_id: Optional[str] = None
-    tab_slug: str = ""
     tab_name: str = ""
     tab_sort: int = 0
     icon: str = ""
@@ -197,7 +190,6 @@ def get_configurator_profile(slug: str, db: Session = Depends(get_db)) -> Config
                     multi=c.selection_mode == "multiple",
                     catalog_category_slug=getattr(c, "catalog_category_slug", "") or "",
                     tab_id=c.tab_id,
-                    tab_slug=tabs[c.tab_id].slug if c.tab_id in tabs else "",
                     tab_name=tabs[c.tab_id].name if c.tab_id in tabs else "",
                     tab_sort=tabs[c.tab_id].sort_order if c.tab_id in tabs else 999,
                     icon=c.icon or "",
@@ -252,43 +244,6 @@ def list_all_slot_products(
             rows = []
         out[category.slug] = [ConfiguratorProductRead(**row).model_dump() for row in _with_filter_values(db, rows)]
     return {"data": out, "meta": {"slots": len(out)}}
-
-
-@router.get(
-    "/profiles/{slug}/categories/{category_slug}/listing",
-    response_model=StorefrontProductListResponse,
-)
-def slot_listing(
-    slug: str,
-    category_slug: str,
-    response: Response,
-    limit: int = Query(2000, ge=1, le=3000),
-    db: Session = Depends(get_db),
-) -> StorefrontProductListResponse:
-    """A slot's products as the admin set the slot up (category or attribute profile, identifying
-    conditions, Include / Exclude; only in-stock ones when General → hide out-of-stock is on) — in the same shape as GET /storefront/products, so the storefront PC
-    builder shows them like its other product lists."""
-    require_storefront_flag("pc_builder")
-    from app.routers.storefront_products import _attach_review_stats
-
-    try:
-        profile = _svc(db).get_profile(slug)
-        views = _svc(db).slot_member_views(profile, category_slug, limit=limit)
-    except ConfiguratorError as exc:
-        raise HTTPException(status_code=404, detail=str(exc)) from exc
-    # Website → PC Builder → General: "hide out-of-stock parts" and "show Coming soon products"
-    settings = _svc(db).storefront_settings()
-    coming_soon = lambda v: (v.stock_status or "") == "coming_soon"
-    if settings["hide_out_of_stock"]:
-        # Coming soon parts aren't out of stock: the other switch decides on them
-        views = [v for v in views if (v.in_stock and (v.stock_status or "in_stock") == "in_stock") or coming_soon(v)]
-    if not settings["show_coming_soon"]:
-        views = [v for v in views if not coming_soon(v)]
-    response.headers["Cache-Control"] = "public, max-age=60, stale-while-revalidate=300"
-    return StorefrontProductListResponse(
-        data=_attach_review_stats(db, views),
-        meta=StorefrontProductListMeta(count=len(views), page=1, per_page=limit),
-    )
 
 
 @router.get(
@@ -488,19 +443,11 @@ def add_configurator_to_cart(
 
 # ------------------------------------------------------------- ready builds --
 
-# a ready-build card names these parts first
-_CARD_SLOT_ORDER = ("cpu", "graphics-card", "memory", "ssd", "hdd", "storage", "motherboard", "power-supply", "cpu-cooler", "casing")
-
-
 def _build_card(db: Session, entry: dict) -> dict:
     build = entry["build"]
     from app.models.catalog_product import CatalogProduct
 
-    from app.models.configurator_category import ConfiguratorCategory
-
-    # the parts a card names first (CPU, GPU, RAM, storage …), each with its slot so the shop can show its icon
-    order = {slug: i for i, slug in enumerate(_CARD_SLOT_ORDER)}
-    parts = []
+    highlights = []
     for slot in ready_build_service.slots_of(db, build.id):
         if slot.mode == "hidden":
             continue
@@ -508,11 +455,8 @@ def _build_card(db: Session, entry: dict) -> dict:
         default_item = next((i for i in items if i.is_default), items[0] if items else None)
         if default_item:
             product = db.get(CatalogProduct, default_item.product_id)
-            cat = db.get(ConfiguratorCategory, slot.category_id)
             if product:
-                parts.append({"slot": cat.slug if cat else "", "name": product.name})
-    parts.sort(key=lambda p: order.get(p["slot"], len(order)))
-    highlights = [p["name"] for p in parts]
+                highlights.append(product.name)
 
     return {
         "id": build.id,
@@ -525,14 +469,10 @@ def _build_card(db: Session, entry: dict) -> dict:
         "show_timer": build.show_timer,
         "ends_at": build.ends_at.isoformat() if build.ends_at else None,
         "highlights": highlights[:4],
-        "parts": parts[:4],
         "totals": entry["totals"],
         "cpu_brand": entry.get("brands", {}).get("cpu_brand"),
         "gpu_brand": entry.get("brands", {}).get("gpu_brand"),
     }
-
-
-_ready_builds_cache = TTLCache(ttl=60)
 
 
 @router.get("/ready-builds")
@@ -546,11 +486,6 @@ def list_ready_builds(
     db: Session = Depends(get_db),
 ) -> dict:
     require_storefront_flag("pc_builder")
-    # the home page and /pc-builder ask for this on every render and it takes ~1.5 s: kept a minute per worker
-    cache_key = (profile_slug, tag, min_price, max_price, cpu_brand, gpu_brand)
-    cached = _ready_builds_cache.get(cache_key)
-    if cached is not None:
-        return cached
     try:
         profile = _svc(db).get_profile(profile_slug)
     except ConfiguratorError as exc:
@@ -558,9 +493,7 @@ def list_ready_builds(
     entries = ready_build_service.list_published(
         db, profile.id, tag=tag, min_price=min_price, max_price=max_price, cpu_brand=cpu_brand, gpu_brand=gpu_brand,
     )
-    result = {"data": [_build_card(db, e) for e in entries], "meta": {"count": len(entries)}}
-    _ready_builds_cache.set(cache_key, result)
-    return result
+    return {"data": [_build_card(db, e) for e in entries], "meta": {"count": len(entries)}}
 
 
 @router.get("/ready-builds/{slug}")

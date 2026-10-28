@@ -1,8 +1,7 @@
 from __future__ import annotations
 
-import os
+import random
 import re
-import secrets
 import uuid
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta
@@ -17,21 +16,33 @@ from app.models.storefront_customer_auth import (
     StorefrontOtpChallenge,
 )
 from app.security import hash_password, new_session_token, verify_password
+from app.services.sms_gateway import is_sms_configured, send_sms
 
 DEFAULT_COMPANY_ID = "default"
 # Customer statuses are active | vip | inactive | blocked. Only the last two
 # are disabled — a VIP is a paying customer, not a locked-out one.
 LOGIN_BLOCKED_STATUSES = {"inactive", "blocked"}
+# Used only while no SMS gateway is configured (Settings → Mail/SMS) — once
+# one is, request_otp sends a real random code instead and this never fires.
 DEFAULT_OTP = "1234"
-OTP_TTL_SECONDS = 300
-# a new code at most every OTP_RESEND_SECONDS, and OTP_MAX_PER_HOUR an hour, per number
-OTP_RESEND_SECONDS = 45
-OTP_MAX_PER_HOUR = 5
+OTP_TTL_SECONDS = 60 * 60 * 24
 SESSION_DAYS = 30
 PIN_LENGTH = 4
 
 EMAIL_RE = re.compile(r"^[^\s@]+@[^\s@]+\.[^\s@]{2,}$")
 PHONE_RE = re.compile(r"^(?:\+?880)?01[3-9]\d{8}$")
+
+
+def collapse_repeated_name(name: str) -> str:
+    """Undo first+last join when both sides were the same full name."""
+    parts = [p for p in (name or "").split() if p]
+    if len(parts) >= 2 and len(parts) % 2 == 0:
+        mid = len(parts) // 2
+        first = " ".join(parts[:mid])
+        second = " ".join(parts[mid:])
+        if first.lower() == second.lower():
+            return first
+    return " ".join(parts) if parts else (name or "")
 
 
 class CustomerAuthError(Exception):
@@ -46,12 +57,6 @@ class NormalizedIdentifier:
     identifier: str
     identifier_type: Literal["phone", "email"]
     display: str
-
-
-def dev_otp_allowed() -> bool:
-    """The fixed development code (DEFAULT_OTP) works only off the live server: never on Railway, and not where
-    STOREFRONT_DEV_OTP=0. With an SMS gateway set up, real codes are sent everywhere."""
-    return not os.environ.get("RAILWAY_ENVIRONMENT") and os.environ.get("STOREFRONT_DEV_OTP", "1") != "0"
 
 
 def normalize_identifier(raw: str) -> NormalizedIdentifier:
@@ -103,35 +108,16 @@ class StorefrontCustomerAuthService:
         is_registered = bool(identity) or bool(self._find_existing_customer(normalized))
         return normalized, identity, is_registered
 
-    def request_otp(self, raw_identifier: str, site_options: Optional[dict] = None) -> Tuple[NormalizedIdentifier, int, bool]:
-        """A fresh random code, sent by SMS through the admin's gateway. Without a gateway the fixed development
-        code works — only off the live server (dev_otp_allowed); live then refuses OTP sign-in. Returns the
-        number, the code's lifetime and whether it is the development code."""
-        from app.services.sms_service import SmsError, send_sms, sms_config
+    def request_otp(self, raw_identifier: str) -> Tuple[NormalizedIdentifier, int, Optional[str]]:
+        """Returns (normalized identifier, TTL, dev_otp).
 
+        `dev_otp` is the code to show in the API response for testing — only
+        set when no SMS gateway is configured. Once one is, a real random
+        code is generated and texted instead, and this comes back None so it
+        never leaks into the response.
+        """
         normalized = normalize_identifier(raw_identifier)
         now = datetime.utcnow()
-        config = sms_config(self._db, site_options)
-        dev = config is None and dev_otp_allowed()
-        if config is None and not dev:
-            raise CustomerAuthError("Sign-in by SMS code isn't available yet — please call us to order", status_code=503)
-        if normalized.identifier_type != "phone" and not dev:
-            raise CustomerAuthError("Sign in with your mobile number (01XXXXXXXXX)")
-
-        recent = (
-            self._db.query(StorefrontOtpChallenge)
-            .filter(
-                StorefrontOtpChallenge.identifier == normalized.identifier,
-                StorefrontOtpChallenge.created_at >= now - timedelta(hours=1),
-            )
-            .order_by(StorefrontOtpChallenge.created_at.desc())
-            .all()
-        )
-        if recent and (now - recent[0].created_at).total_seconds() < OTP_RESEND_SECONDS:
-            wait = OTP_RESEND_SECONDS - int((now - recent[0].created_at).total_seconds())
-            raise CustomerAuthError(f"Please wait {wait} seconds before asking for a new code", status_code=429)
-        if len(recent) >= OTP_MAX_PER_HOUR:
-            raise CustomerAuthError("Too many codes asked for this number — try again in an hour", status_code=429)
         # Invalidate previous open challenges for this identifier.
         open_challenges = (
             self._db.query(StorefrontOtpChallenge)
@@ -145,7 +131,17 @@ class StorefrontCustomerAuthService:
         for challenge in open_challenges:
             challenge.consumed_at = now
 
-        code = DEFAULT_OTP if dev else f"{secrets.randbelow(10 ** PIN_LENGTH):0{PIN_LENGTH}d}"
+        sms_ready = normalized.identifier_type == "phone" and is_sms_configured(self._db)
+        dev_otp: Optional[str] = None
+        if sms_ready:
+            code = f"{random.randint(0, 9999):04d}"
+            sent = send_sms(self._db, normalized.identifier, f"Your Excellent Technology BD verification code is {code}")
+            if not sent:
+                raise CustomerAuthError("Could not send the verification code — please try again", status_code=502)
+        else:
+            code = DEFAULT_OTP
+            dev_otp = DEFAULT_OTP
+
         challenge = StorefrontOtpChallenge(
             identifier=normalized.identifier,
             identifier_type=normalized.identifier_type,
@@ -154,15 +150,7 @@ class StorefrontCustomerAuthService:
         )
         self._db.add(challenge)
         self._db.commit()
-        if not dev:
-            try:
-                send_sms(config, normalized.identifier,
-                         f"Your login code is {code}. It expires in {OTP_TTL_SECONDS // 60} minutes. Never share it.")
-            except SmsError as exc:
-                challenge.consumed_at = now
-                self._db.commit()
-                raise CustomerAuthError(str(exc), status_code=502) from exc
-        return normalized, OTP_TTL_SECONDS, dev
+        return normalized, OTP_TTL_SECONDS, dev_otp
 
     def verify_otp(
         self,
@@ -186,20 +174,16 @@ class StorefrontCustomerAuthService:
             .order_by(StorefrontOtpChallenge.created_at.desc())
             .first()
         )
+
         if not challenge or challenge.expires_at <= now:
             raise CustomerAuthError("OTP expired — request a new code", status_code=400)
         if challenge.attempts >= challenge.max_attempts:
             raise CustomerAuthError("Too many OTP attempts — request a new code", status_code=400)
-
         if not verify_password(code, challenge.code_hash):
             challenge.attempts += 1
             self._db.commit()
-            left = challenge.max_attempts - challenge.attempts
-            raise CustomerAuthError(
-                f"Wrong code — check the SMS ({left} {'try' if left == 1 else 'tries'} left)" if left > 0
-                else "Too many wrong codes — request a new one",
-                status_code=401,
-            )
+            hint = f" — use {DEFAULT_OTP} until an SMS gateway is configured" if not is_sms_configured(self._db) else ""
+            raise CustomerAuthError(f"Wrong OTP{hint}", status_code=401)
 
         challenge.consumed_at = now
         identity, customer = self._get_or_create_identity(
@@ -207,6 +191,27 @@ class StorefrontCustomerAuthService:
             verified_at=now,
             display_name=display_name,
         )
+        token, expires_at = self._issue_session(identity, customer)
+        self._db.commit()
+        return token, expires_at, customer, identity
+
+    def login_with_google(
+        self,
+        email: str,
+        name: str = "",
+    ) -> Tuple[str, datetime, CommerceCustomer, StorefrontCustomerIdentity]:
+        normalized = normalize_identifier(email)
+        if normalized.identifier_type != "email":
+            raise CustomerAuthError("Google account must include an email address")
+        now = datetime.utcnow()
+        display = " ".join((name or "").split()).strip()
+        identity, customer = self._get_or_create_identity(
+            normalized,
+            verified_at=now,
+            display_name=display or None,
+        )
+        if display:
+            customer.name = display[:120]
         token, expires_at = self._issue_session(identity, customer)
         self._db.commit()
         return token, expires_at, customer, identity
@@ -385,7 +390,6 @@ class StorefrontCustomerAuthService:
             code = f"SF-{new_session_token()[:8].upper()}"
 
         row = CommerceCustomer(
-            id=str(uuid.uuid4()),
             company_id=DEFAULT_COMPANY_ID,
             customer_code=code,
             name=name,
@@ -411,11 +415,6 @@ class StorefrontCustomerAuthService:
                 ]
             ),
         )
-        # party_id is NOT NULL — link before the first insert, same fix as the
-        # admin create-customer endpoint (commerce_customers.py).
-        from app.services.parties.commerce_party_bridge import ensure_party_for_customer
-
-        ensure_party_for_customer(self._db, row)
         self._db.add(row)
         self._db.flush()
         return row
@@ -428,7 +427,7 @@ class StorefrontCustomerAuthService:
         return {
             "id": customer.id,
             "customer_code": customer.customer_code,
-            "name": customer.name,
+            "name": collapse_repeated_name(customer.name),
             "phone": customer.phone or (identity.display_identifier if identity.identifier_type == "phone" else ""),
             "email": customer.email or (identity.display_identifier if identity.identifier_type == "email" else ""),
             "profile_image": customer.profile_image,

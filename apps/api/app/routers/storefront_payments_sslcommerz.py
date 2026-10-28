@@ -4,9 +4,9 @@ from __future__ import annotations
 
 import json
 import uuid
-from datetime import datetime, timedelta
+from datetime import datetime
 from decimal import Decimal
-from typing import Any, Dict, Optional
+from typing import Any, Dict
 from urllib.parse import quote
 
 from fastapi import APIRouter, Depends, Form, HTTPException, Request
@@ -18,7 +18,7 @@ from app.config import get_settings
 from app.database import get_db
 from app.deps.storefront_customer_auth import (
     CustomerAuthContext,
-    get_optional_storefront_customer,
+    get_current_storefront_customer,
 )
 from app.models.commerce_customer import dump_json, load_json
 from app.models.commerce_order import CommerceOrder
@@ -35,7 +35,6 @@ from app.services.sslcommerz_client import (
 router = APIRouter(prefix="/payments/sslcommerz", tags=["storefront-payments-sslcommerz"])
 
 PLUGIN_ID = "sslcommerz-default"
-GUEST_PAY_WINDOW = timedelta(hours=24)
 
 
 class SslcommerzCreateRequest(BaseModel):
@@ -67,19 +66,15 @@ def _api_base(request: Request) -> str:
     configured = settings.public_api_base_url.strip()
     if configured:
         return configured.rstrip("/")
-    base = str(request.base_url).rstrip("/")
-    # Behind Railway's proxy uvicorn sees plain http; SSLCommerz must post back to https, since a redirect
-    # from http would turn its POST into a GET.
-    proto = (request.headers.get("x-forwarded-proto") or "").split(",")[0].strip()
-    if proto == "https" and base.startswith("http://"):
-        base = "https://" + base[len("http://"):]
-    return base
+    return str(request.base_url).rstrip("/")
 
 
 def _result_redirect(order_number: str, status: str, message: str = "") -> RedirectResponse:
     settings = get_settings()
     base = settings.storefront_public_url.strip().rstrip("/")
-    url = f"{base}/payment/sslcommerz/result?order={quote(order_number)}&status={quote(status)}"
+    url = f"{base}/account/payments?pay={quote(status)}"
+    if order_number:
+        url += f"&order={quote(order_number)}"
     if message:
         url += f"&message={quote(message[:200])}"
     return RedirectResponse(url=url, status_code=303)
@@ -145,6 +140,10 @@ def _mark_order_paid(db: Session, order: CommerceOrder, *, trx_id: str, amount: 
 
     db.commit()
 
+    from app.services.ecommerce.digital_delivery_service import fulfill_paid_order_digital_downloads
+
+    fulfill_paid_order_digital_downloads(db, order)
+
 
 def _finalize_success(
     db: Session,
@@ -170,20 +169,14 @@ def create_sslcommerz_payment(
     payload: SslcommerzCreateRequest,
     request: Request,
     db: Session = Depends(get_db),
-    ctx: Optional[CustomerAuthContext] = Depends(get_optional_storefront_customer),
+    ctx: CustomerAuthContext = Depends(get_current_storefront_customer),
 ) -> SslcommerzCreateResponse:
-    """Signed-in shoppers pay their own orders. Guests pay the order they just placed: its id is only in
-    the checkout response, and only within GUEST_PAY_WINDOW of placing it."""
-    customer = ctx[2] if ctx else None
+    _session, _identity, customer = ctx
     plugin = _active_plugin(db)
 
     order = db.get(CommerceOrder, payload.order_id.strip())
-    if not order:
+    if not order or order.customer_id != customer.id:
         raise HTTPException(status_code=404, detail="Order not found")
-    if customer is not None and order.customer_id != customer.id:
-        raise HTTPException(status_code=404, detail="Order not found")
-    if customer is None and (order.created_at is None or datetime.utcnow() - order.created_at > GUEST_PAY_WINDOW):
-        raise HTTPException(status_code=403, detail="Sign in to pay for this order")
     if order.payment_status == "paid":
         raise HTTPException(status_code=400, detail="Order is already paid")
     if order.grand_total <= 0:
@@ -202,9 +195,9 @@ def create_sslcommerz_payment(
             fail_url=f"{prefix}/fail",
             cancel_url=f"{prefix}/cancel",
             ipn_url=f"{prefix}/ipn",
-            customer_name=order.customer_name or (customer.name if customer else "") or "Customer",
-            customer_email=order.customer_email or (customer.email if customer else "") or "customer@example.com",
-            customer_phone=order.customer_phone or (customer.phone if customer else "") or "01700000000",
+            customer_name=order.customer_name or customer.name or "Customer",
+            customer_email=order.customer_email or customer.email or "customer@example.com",
+            customer_phone=order.customer_phone or customer.phone or "01700000000",
             customer_address=order.billing_address or "Dhaka",
             customer_city=order.billing_city or "Dhaka",
             product_name=order.order_number,

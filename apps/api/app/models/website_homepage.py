@@ -28,7 +28,7 @@ DEFAULT_HERO: dict[str, Any] = {
             "id": "s1",
             "image_url": "/images/image/cache/catalog/website/slider/slider-1880x1060.jpg",
             "href": "/offers",
-            "alt": "Monarch IT — HyperX Cloud II",
+            "alt": "Excellent Technology BD — HyperX Cloud II",
             "object_fit": "fill",
             "image_width": 1880,
             "image_height": 1060,
@@ -38,7 +38,7 @@ DEFAULT_HERO: dict[str, Any] = {
             "id": "s2",
             "image_url": "/images/image/cache/catalog/website/slider/slider-1880x1060.jpg",
             "href": "/pc-builder",
-            "alt": "Monarch IT — Build Your Dream PC",
+            "alt": "Excellent Technology BD — Build Your Dream PC",
             "object_fit": "fill",
             "image_width": 1880,
             "image_height": 1060,
@@ -48,6 +48,8 @@ DEFAULT_HERO: dict[str, Any] = {
 }
 
 DEFAULT_CATEGORIES: dict[str, Any] = {
+    "title": "Shop by Category",
+    "subtitle": "Jump straight to the department you're after.",
     "hidden": False,
     "items": [],
 }
@@ -58,7 +60,7 @@ DEFAULT_BANNERS: dict[str, Any] = {
             "id": "b1",
             "image_url": "/images/image/cache/catalog/website/banner/slider1-660x418.jpg",
             "href": "/ac",
-            "alt": "Monarch IT — Air Conditioner Offers",
+            "alt": "Excellent Technology BD — Air Conditioner Offers",
             "object_fit": "fill",
             "image_width": 660,
             "image_height": 418,
@@ -68,7 +70,7 @@ DEFAULT_BANNERS: dict[str, Any] = {
             "id": "b2",
             "image_url": "/images/image/cache/catalog/website/banner/slider2-660x418.jpg",
             "href": "/offers",
-            "alt": "Monarch IT — Hot Deals",
+            "alt": "Excellent Technology BD — Hot Deals",
             "object_fit": "fill",
             "image_width": 660,
             "image_height": 418,
@@ -78,13 +80,24 @@ DEFAULT_BANNERS: dict[str, Any] = {
             "id": "b3",
             "image_url": "/images/image/cache/catalog/website/banner/samrt-tv-exchange1-660x418.jpg",
             "href": "/tv",
-            "alt": "Monarch IT — Smart TV Exchange",
+            "alt": "Excellent Technology BD — Smart TV Exchange",
             "object_fit": "fill",
             "image_width": 660,
             "image_height": 418,
             "hidden": False,
         },
     ],
+}
+
+DEFAULT_HAPPY_HOUR_PROMO: dict[str, Any] = {
+    "id": "happy-hour-promo",
+    "image_url": "/images/banners/happy-hour-promo.jpg",
+    "href": "/happy-hour",
+    "alt": "Excellent Technology BD Happy Hour",
+    "object_fit": "fill",
+    "image_width": None,
+    "image_height": None,
+    "hidden": False,
 }
 
 DEFAULT_FEATURED: dict[str, Any] = {
@@ -129,26 +142,22 @@ DEFAULT_BRANDS: dict[str, Any] = {
     "items": [],
 }
 
-DEFAULT_ABOUT_BODY_HTML = """\
-<h3>Leading Computer, Laptop &amp; Gaming PC Retail in Bangladesh</h3>
-<p><a href="/">Monarch IT Limited</a>, a trusted name since January 1991, is a leading computer shop in Bangladesh. Guided by the motto “Create the Future,” we offer genuine tech products, reliable solutions, and unmatched support nationwide.</p>
-<h3>Authorized Importer &amp; Exclusive Distributor</h3>
-<p>Monarch IT is a major importer and distributor with exclusive partnerships for brands including ROYAL KLUDGE, ONIKUMA, T-WOLF, OSCOO, POWERCOLOR, MANLI, ARCTIC, and AIWA — ensuring authenticity, warranty support, and competitive pricing.</p>
+DEFAULT_ABOUT_BODY_HTML = """<h3>Laptop, Desktop &amp; IT Shop in Dhaka</h3>
+<p><a href="/">Excellent Technology BD</a> is a Dhaka-based IT retailer offering genuine laptops, desktops, monitors, components and accessories with official warranty — online and across our IDB Bhaban, Multiplan and Mirpur branches.</p>
 <h3>Laptops, Desktops &amp; PC Builder</h3>
-<p>From HP, Dell, Asus, Apple MacBook, MSI, Lenovo, and Gigabyte laptops to custom Gaming PCs and Brand PCs, Monarch IT covers every budget. Use our <a href="/pc-builder">PC Builder</a> to configure parts online or visit an outlet for expert guidance.</p>
-<h3>Why Choose Monarch IT?</h3>
+<p>From ASUS, Lenovo, HP, Dell, MSI and Apple laptops to custom gaming PCs, we cover every budget. Use our <a href="/pc-builder">PC Builder</a> to plan a compatible build online, or visit a branch for expert advice.</p>
+<h3>Why Choose Excellent Technology BD?</h3>
 <ul>
-<li><strong>Best computer shop in Bangladesh</strong> — laptops, desktops, and accessories</li>
-<li><strong>Gaming PC specialist</strong> — high-end components and setups</li>
-<li><strong>Authorized importer &amp; distributor</strong> — genuine products with warranty</li>
-<li><strong>Fast nationwide delivery</strong> — reliable after-sales support</li>
+<li><strong>100% genuine products</strong> — with official brand warranty</li>
+<li><strong>Three branches in Dhaka</strong> — test before you buy</li>
+<li><strong>Easy EMI</strong> — 0% EMI on selected cards</li>
+<li><strong>Fast delivery</strong> — same day inside Dhaka, nationwide courier</li>
 </ul>
-<p><strong>Monarch IT</strong> — Create the Future.</p>
 """
 
 DEFAULT_ABOUT: dict[str, Any] = {
-    "title": "Monarch IT Ltd",
-    "subtitle": "A Trusted Computer Distributor & Retailer in Bangladesh",
+    "title": "Excellent Technology BD",
+    "subtitle": "A Trusted Computer Retailer & Online Shop in Bangladesh",
     # When true, body starts collapsed with expand/collapse control on storefront.
     "collapse_enabled": True,
     "body_html": DEFAULT_ABOUT_BODY_HTML,
@@ -159,10 +168,10 @@ _SUPPORT_IMG = "/images/image/cache/catalog/website/custom"
 DEFAULT_SUPPORT: dict[str, Any] = {
     "title": "Support",
     "subtitle": "Official distributor of trusted brands.",
-    "phone": "+8801332-812759",
-    "phone_href": "tel:+8801332812759",
-    "whatsapp": "+8801332-812764",
-    "whatsapp_href": "https://wa.me/8801332812764",
+    "phone": "01913-004278",
+    "phone_href": "tel:+8801913004278",
+    "whatsapp": "01913-004278",
+    "whatsapp_href": "https://wa.me/8801913004278",
     "hours": "10:00 AM - 08:00 PM",
     "phone_icon_url": f"{_SUPPORT_IMG}/support-phone-image-60x60.png",
     "agent_image_url": f"{_SUPPORT_IMG}/support-us-image-140x140.png",
@@ -176,7 +185,7 @@ _SIDE_IMG = "/uploads/media"
 
 DEFAULT_SIDE_MENU: dict[str, Any] = {
     "enabled": True,
-    "logo_url": f"{_SIDE_IMG}/sidemenu-monarch-it-icon.png",
+    "logo_url": "",
     "logo_href": "/",
     "items": [
         {
@@ -240,14 +249,14 @@ _HEADER_IMG = "/uploads/media"
 
 DEFAULT_HEADER_MOBILE: dict[str, Any] = {
     "enabled": True,
-    "logo_url": f"{_HEADER_IMG}/header-monarch-it-logo.png",
+    "logo_url": "",
     "logo_href": "/",
     "search_placeholder": "Search Products",
 }
 
 DEFAULT_HEADER: dict[str, Any] = {
     "enabled": True,
-    "logo_url": f"{_HEADER_IMG}/header-monarch-it-logo.png",
+    "logo_url": "",
     "logo_href": "/",
     "search_placeholder": "Search Products",
     "order_track": {
@@ -280,31 +289,31 @@ DEFAULT_FOOTER_MOBILE: dict[str, Any] = {
 
 DEFAULT_FOOTER: dict[str, Any] = {
     "enabled": True,
-    "logo_url": f"{_FOOTER_IMG}/footer-monarch-it.png",
+    "logo_url": "",
     "about_text": (
-        "At Monarch IT, we are committed to create the future by delivering genuine tech products, "
-        "reliable solutions, and unmatched support. Our goal is to inspire growth and success through technology."
+        "Your trusted destination for laptops, desktops, components and IT accessories in "
+        "Bangladesh — genuine products with official warranty."
     ),
     "socials": [
         {"id": "s1", "icon": "fa-facebook-f", "href": "#"},
         {"id": "s2", "icon": "fa-instagram", "href": "#"},
-        {"id": "s3", "icon": "fa-whatsapp", "href": "https://wa.me/8801332812764"},
+        {"id": "s3", "icon": "fa-whatsapp", "href": "https://wa.me/8801913004278"},
         {"id": "s4", "icon": "fa-youtube", "href": "#"},
     ],
     "links_title": "Important Links",
     "membership_title": "Membership",
     "membership_logo_url": f"{_FOOTER_IMG}/footer-partnership-logo.png",
     "head_office_text": (
-        "Head Office: Bs Bhaban, 2nd Floor, 75-76, New Elephant Road, Dhaka-1205, Bangladesh"
+        "IDB Branch: Shop# 315 (3rd Floor), BCS Computer City, IDB Bhaban, Agargaon, Dhaka-1207"
     ),
-    "copyright_text": "© 2026, Monarch IT Ltd, All Rights Reserved.",
+    "copyright_text": "© 2026, Excellent Technology BD, All Rights Reserved.",
     "payment_image_url": f"{_FOOTER_IMG}/footer-payment-partner.png",
     "mobile": dict(DEFAULT_FOOTER_MOBILE),
 }
 
 
 def featured_category_carousel_items(category_nodes: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """Same pick order as Monarch CategoryCarousel auto mode (top-menu roots + children)."""
+    """Same pick order as the storefront CategoryCarousel auto mode (top-menu roots + children)."""
     roots = [c for c in category_nodes if c.get("show_in_top_menu")]
     base = roots if roots else list(category_nodes)
     if len(base) >= 6:
@@ -329,6 +338,8 @@ def featured_category_carousel_items(category_nodes: list[dict[str, Any]]) -> li
 
 def categories_section_from_catalog(category_nodes: list[dict[str, Any]]) -> dict[str, Any]:
     return {
+        "title": DEFAULT_CATEGORIES["title"],
+        "subtitle": DEFAULT_CATEGORIES["subtitle"],
         "hidden": False,
         "items": featured_category_carousel_items(category_nodes),
     }

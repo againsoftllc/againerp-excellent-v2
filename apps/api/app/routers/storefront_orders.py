@@ -1,10 +1,11 @@
 from __future__ import annotations
 
+import re
 from datetime import datetime
 from typing import List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from sqlalchemy import or_
+from sqlalchemy import func, or_
 from sqlalchemy.orm import Session
 
 from app.database import get_db
@@ -19,6 +20,7 @@ from app.schemas.storefront import (
     StorefrontOrderTrackResponse,
     StorefrontOrderTrackUpdate,
 )
+from app.services.ecommerce.storefront_customer_auth_service import collapse_repeated_name
 
 router = APIRouter(prefix="/orders", tags=["storefront-orders"])
 
@@ -128,7 +130,7 @@ def _to_track_read(db: Session, order: CommerceOrder) -> StorefrontOrderTrackRea
         shipment_status=order.shipment_status,
         payment_method=order.payment_method or "COD",
         grand_total=order.grand_total,
-        customer_name=order.customer_name,
+        customer_name=collapse_repeated_name(order.customer_name or ""),
         customer_phone=order.customer_phone or "",
         shipping_address=shipping_line or (order.shipping_address or ""),
         shipping_city=order.shipping_city,
@@ -143,23 +145,101 @@ def _to_track_read(db: Session, order: CommerceOrder) -> StorefrontOrderTrackRea
     )
 
 
+_ORD_TOKEN_RE = re.compile(r"ORD[-_]?[A-Z0-9]{4,}", re.IGNORECASE)
+
+
+def _norm_track_query(value: str) -> str:
+    return "".join(ch for ch in (value or "").strip().upper() if ch.isalnum() or ch in "-_")
+
+
+def _candidate_track_queries(value: str) -> List[str]:
+    raw = (value or "").strip()
+    found: List[str] = []
+    if raw:
+        found.append(raw)
+    for match in _ORD_TOKEN_RE.finditer(raw):
+        token = match.group(0)
+        if token not in found:
+            found.append(token)
+    for part in re.split(r"[\s,;:#|]+", raw):
+        token = part.strip()
+        if token and token not in found and len(token) >= 4:
+            found.append(token)
+    return found
+
+
 def _find_order(db: Session, query: str) -> Optional[CommerceOrder]:
-    q = query.strip()
-    if not q:
+    seen: set[str] = set()
+    for candidate in _candidate_track_queries(query):
+        key = _norm_track_query(candidate)
+        if len(key) < 3 or key in seen:
+            continue
+        seen.add(key)
+        row = _lookup_order(db, candidate)
+        if row:
+            return row
+    return None
+
+
+def _lookup_order(db: Session, query: str) -> Optional[CommerceOrder]:
+    raw = (query or "").strip()
+    q = _norm_track_query(raw)
+    compact = q.replace("-", "").replace("_", "")
+    if len(compact) < 3:
         return None
-    upper = q.upper()
+
+    number_compact = func.replace(func.replace(func.upper(CommerceOrder.order_number), "-", ""), "_", "")
 
     by_number = (
         db.query(CommerceOrder)
-        .filter(CommerceOrder.order_number.ilike(upper))
+        .filter(
+            or_(
+                func.upper(CommerceOrder.order_number) == q,
+                number_compact == compact,
+            )
+        )
         .first()
     )
     if by_number:
         return by_number
 
+    if not q.startswith("ORD"):
+        prefixed = (
+            db.query(CommerceOrder)
+            .filter(
+                or_(
+                    func.upper(CommerceOrder.order_number) == f"ORD-{q}",
+                    number_compact == f"ORD{compact}",
+                )
+            )
+            .first()
+        )
+        if prefixed:
+            return prefixed
+
+    if len(compact) >= 6:
+        by_suffix = (
+            db.query(CommerceOrder)
+            .filter(number_compact.like(f"%{compact}"))
+            .order_by(CommerceOrder.order_date.desc())
+            .first()
+        )
+        if by_suffix:
+            return by_suffix
+
+    by_id = db.get(CommerceOrder, raw) or db.get(CommerceOrder, q)
+    if by_id:
+        return by_id
+
     by_order_tracking = (
         db.query(CommerceOrder)
-        .filter(CommerceOrder.tracking_number.ilike(q))
+        .filter(
+            or_(
+                CommerceOrder.tracking_number.ilike(raw),
+                CommerceOrder.tracking_number.ilike(q),
+                func.replace(func.upper(CommerceOrder.tracking_number), "-", "") == compact,
+            )
+        )
         .first()
     )
     if by_order_tracking:
@@ -169,8 +249,10 @@ def _find_order(db: Session, query: str) -> Optional[CommerceOrder]:
         db.query(CommerceOrderShipment)
         .filter(
             or_(
+                CommerceOrderShipment.tracking_number.ilike(raw),
                 CommerceOrderShipment.tracking_number.ilike(q),
-                CommerceOrderShipment.shipment_number.ilike(upper),
+                CommerceOrderShipment.shipment_number.ilike(q),
+                func.replace(func.upper(CommerceOrderShipment.tracking_number), "-", "") == compact,
             )
         )
         .first()

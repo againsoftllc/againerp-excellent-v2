@@ -34,3 +34,6 @@ PUBLISH_TO_CATALOG_STATUS = {
 }
 
 STOREFRONT_LIVE_STATUSES = frozenset({"published"})
+
+# "hidden" is what a Published + Private product becomes.
+PREVIEW_VISIBLE_STATUSES = frozenset({"published", "hidden"})

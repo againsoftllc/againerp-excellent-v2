@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import List, Optional
 
 from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile
+from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from app.database import get_db
@@ -34,6 +35,7 @@ from app.schemas.storefront_account import (
     AccountOrderDetailResponse,
     AccountOrderLineRead,
     AccountOrderListResponse,
+    AccountOrderGiftRead,
     AccountOrderProductRead,
     AccountOrderRead,
     AccountPaymentListResponse,
@@ -58,6 +60,7 @@ from app.schemas.storefront_account import (
     ProfileUpdateRequest,
     RecentOrderRead,
 )
+from app.services.commerce.customer_order_stats import BUCKET_LABELS, stats_from_orders
 from app.services.ecommerce.storefront_customer_auth_service import StorefrontCustomerAuthService
 from app.services.media_storage import save_media_bytes
 from app.security import new_session_token
@@ -128,24 +131,74 @@ def _extract_shipping_method(notes: str | None) -> str | None:
     return None
 
 
+def _gift_amount(db: Session, order: CommerceOrder) -> Decimal:
+    """What was charged for lines marked as combo gifts.
+
+    Orders placed before gifts were priced at zero still carry that amount in
+    their stored totals, so it is taken off here rather than showing the
+    customer a bill for something the shop called free.
+    """
+    total = Decimal("0")
+    for item in (
+        db.query(CommerceOrderItem).filter(CommerceOrderItem.order_id == order.id).all()
+    ):
+        attrs = _line_attributes(item)
+        if attrs.get("bundle_gift") in (True, "true", "True", "1", 1):
+            line = item.line_total
+            if line is None:
+                line = (item.unit_price or Decimal("0")) * int(item.quantity or 0)
+            total += Decimal(str(line))
+    return total
+
+
 def _to_order_read(db: Session, order: CommerceOrder) -> AccountOrderRead:
+    gift_amount = _gift_amount(db, order)
     return AccountOrderRead(
         id=order.id,
         order_number=order.order_number,
         date=order.order_date.strftime("%Y-%m-%d"),
         product_label=_order_product_label(db, order),
-        total=order.grand_total,
+        total=max((order.grand_total or Decimal("0")) - gift_amount, Decimal("0")),
         paid=order.paid_amount,
-        due=order.due_amount,
+        due=max((order.due_amount or Decimal("0")) - gift_amount, Decimal("0")),
         status=order.status,
         payment_status=order.payment_status,
         shipment_status=order.shipment_status,
-        subtotal=order.subtotal or 0,
+        subtotal=max((order.subtotal or Decimal("0")) - gift_amount, Decimal("0")),
         discount_amount=order.discount_amount or 0,
         shipping_amount=order.shipping_amount or order.shipping_cost or 0,
         tax_amount=order.tax_amount or 0,
         coupon_code=_extract_coupon_code(order.notes),
     )
+
+
+def _line_attributes(item: CommerceOrderItem) -> dict:
+    raw = getattr(item, "attributes_json", None)
+    if not raw:
+        return {}
+    try:
+        parsed = json.loads(raw) if isinstance(raw, str) else raw
+    except (TypeError, ValueError, json.JSONDecodeError):
+        return {}
+    return parsed if isinstance(parsed, dict) else {}
+
+
+def _line_gifts(attrs: dict) -> List[AccountOrderGiftRead]:
+    """Free extras that never became order lines, so the only record of them is
+    the attributes their combo's lines carry."""
+    raw = attrs.get("bundle_gifts")
+    if not isinstance(raw, list):
+        return []
+    out: List[AccountOrderGiftRead] = []
+    for entry in raw:
+        if isinstance(entry, dict):
+            name = str(entry.get("name") or "").strip()
+            image = str(entry.get("image") or "").strip() or None
+        else:
+            name, image = str(entry or "").strip(), None
+        if name:
+            out.append(AccountOrderGiftRead(name=name, image=image))
+    return out
 
 
 def _to_order_detail(db: Session, order: CommerceOrder) -> AccountOrderDetailRead:
@@ -159,12 +212,25 @@ def _to_order_detail(db: Session, order: CommerceOrder) -> AccountOrderDetailRea
     # variants of one product renders as one product with nested option lines.
     grouped: dict[str, AccountOrderProductRead] = {}
     for item in items:
-        key = item.product_id or item.name
+        attrs = _line_attributes(item)
+        bundle_name = str(attrs.get("bundle_name") or "").strip()
+        # A combo arrives as one line per component. Keying on the combo keeps
+        # them together, so the customer sees the offer they bought rather than
+        # four unrelated products.
+        key = f"bundle:{bundle_name}" if bundle_name else (item.product_id or item.name)
         qty = int(item.quantity or 0)
-        unit = item.unit_price or 0
-        line_total = item.line_total if item.line_total is not None else (unit * qty)
+        # A gift is given, not sold — it must never add to what the order costs.
+        is_gift = attrs.get("bundle_gift") in (True, "true", "True", "1", 1)
+        unit = Decimal("0") if is_gift else (item.unit_price or 0)
+        if is_gift:
+            line_total = Decimal("0")
+        else:
+            line_total = item.line_total if item.line_total is not None else (unit * qty)
         line = AccountOrderLineRead(
-            label=item.variant_label or item.sku or item.name,
+            # Inside a combo each line is a different product, so the component's
+            # own name is what identifies it — a variant label would be blank.
+            label=(item.name if bundle_name else (item.variant_label or item.sku or item.name)),
+            is_gift=is_gift,
             qty=qty,
             unit_price=unit,
             line_total=line_total,
@@ -174,13 +240,23 @@ def _to_order_detail(db: Session, order: CommerceOrder) -> AccountOrderDetailRea
         if existing:
             existing.lines.append(line)
             existing.total_qty += qty
+            if not existing.image_url and item.image_url:
+                existing.image_url = item.image_url
         else:
             grouped[key] = AccountOrderProductRead(
-                name=item.name,
+                name=f"Combo: {bundle_name}" if bundle_name else item.name,
                 image_url=item.image_url,
                 total_qty=qty,
                 lines=[line],
+                bundle_name=bundle_name or None,
+                gifts=_line_gifts(attrs),
             )
+    # Gifts sink to the bottom of their combo: the customer reads what they paid
+    # for first, then what came free, instead of the two interleaved by whatever
+    # order the cart happened to add them in.
+    for entry in grouped.values():
+        entry.lines.sort(key=lambda line: 1 if line.is_gift else 0)
+
     products: List[AccountOrderProductRead] = list(grouped.values())
     shipping_bits = [order.shipping_address or "", order.shipping_city or "", order.shipping_region or ""]
     delivery_address = ", ".join(part for part in shipping_bits if part)
@@ -210,14 +286,19 @@ def account_summary(
 ) -> AccountSummaryResponse:
     _session, identity, customer = ctx
     orders = _owned_orders_query(db, customer).all()
-    pending = sum(1 for o in orders if o.status in {"pending", "confirmed"})
-    processing = sum(1 for o in orders if o.status in {"processing", "packed", "shipped"})
-    completed = sum(1 for o in orders if o.status in {"completed", "delivered"})
-    total = max(len(orders), 1)
+    # Shared with the admin panel so both sides count the same way. Previously
+    # this bucketed here: "processing" is a sales-order word a commerce order
+    # never holds, so that ring was always zero, and cancelled orders counted
+    # towards the total while belonging to no ring at all.
+    summary = stats_from_orders(orders, [])
     stats = [
-        OrderStatusStat(key="pending", label="Pending", count=pending, pct=int(round(pending * 100 / total))),
-        OrderStatusStat(key="processing", label="Processing", count=processing, pct=int(round(processing * 100 / total))),
-        OrderStatusStat(key="completed", label="Completed", count=completed, pct=int(round(completed * 100 / total))),
+        OrderStatusStat(
+            key=key,
+            label=label,
+            count=summary.count_of(key),
+            pct=summary.pct_of(key),
+        )
+        for key, label in BUCKET_LABELS
     ]
     recent = [
         RecentOrderRead(
@@ -241,6 +322,8 @@ def account_summary(
     return AccountSummaryResponse(
         data=AccountSummaryRead(
             customer=_me(customer, identity),
+            total_orders=summary.total,
+            total_spend=summary.total_spend,
             status_stats=stats,
             recent_orders=recent,
             account_manager=manager,
@@ -468,6 +551,62 @@ def get_order(
     return AccountOrderDetailResponse(data=_to_order_detail(db, order))
 
 
+class AccountDigitalDownloadRead(BaseModel):
+    order_number: str
+    product_name: str
+    file_name: str
+    file_size: int
+    download_url: str
+    download_count: int
+    max_downloads: Optional[int] = None
+    expires_at: Optional[datetime] = None
+    ordered_at: datetime
+
+
+class AccountDigitalDownloadListResponse(BaseModel):
+    data: List[AccountDigitalDownloadRead]
+
+
+@router.get("/downloads", response_model=AccountDigitalDownloadListResponse)
+def list_downloads(
+    ctx: CustomerAuthContext = Depends(get_current_storefront_customer),
+    db: Session = Depends(get_db),
+) -> AccountDigitalDownloadListResponse:
+    from app.models.catalog_product_digital_file import CatalogProductDigitalFile
+    from app.models.commerce_order_digital_download import CommerceOrderDigitalDownload
+    from app.services.ecommerce.digital_delivery_service import download_url
+
+    _session, _identity, customer = ctx
+    rows = (
+        db.query(CommerceOrderDigitalDownload, CommerceOrder, CommerceOrderItem, CatalogProductDigitalFile)
+        .join(CommerceOrder, CommerceOrder.id == CommerceOrderDigitalDownload.order_id)
+        .join(CommerceOrderItem, CommerceOrderItem.id == CommerceOrderDigitalDownload.order_item_id)
+        .join(
+            CatalogProductDigitalFile,
+            CatalogProductDigitalFile.id == CommerceOrderDigitalDownload.digital_file_id,
+        )
+        .filter(CommerceOrder.customer_id == customer.id, CommerceOrder.payment_status == "paid")
+        .order_by(CommerceOrder.order_date.desc())
+        .all()
+    )
+    return AccountDigitalDownloadListResponse(
+        data=[
+            AccountDigitalDownloadRead(
+                order_number=order.order_number,
+                product_name=item.name,
+                file_name=digital_file.file_name,
+                file_size=digital_file.file_size,
+                download_url=download_url(grant.token),
+                download_count=grant.download_count,
+                max_downloads=grant.max_downloads,
+                expires_at=grant.expires_at,
+                ordered_at=order.order_date,
+            )
+            for grant, order, item, digital_file in rows
+        ],
+    )
+
+
 _PAYMENT_PROVIDER_LABELS = {
     "cod": "Cash on Delivery",
     "mobile": "Mobile Banking",
@@ -481,6 +620,17 @@ _PAYMENT_STATUS_LABELS = {
     "pending": "Pending",
     "paid": "Paid",
     "completed": "Completed",
+    "failed": "Failed",
+}
+
+
+# Once an order's money has actually moved, that outranks whatever the note
+# recorded at checkout. "unpaid" is absent on purpose: it means nothing has
+# happened yet, which is exactly when the note is the better description.
+_SETTLED_PAYMENT_LABELS = {
+    "paid": "Completed",
+    "partial": "Partially paid",
+    "refunded": "Refunded",
     "failed": "Failed",
 }
 
@@ -549,15 +699,26 @@ def list_payments(
     for pay in payments:
         order = order_map.get(pay.source_id)
         note, status_hint = _humanize_payment_note(pay.notes)
+        # The note is written once at checkout and never revisited, so a COD
+        # order collected weeks later still read "Initiated". The order's own
+        # payment state is the live answer; the note only fills the gap before
+        # anything has been settled either way.
+        settled = _SETTLED_PAYMENT_LABELS.get(order.payment_status) if order else None
+        # A gateway payment awaiting redirect is stored with amount 0, which
+        # showed the shopper a ৳0 row. Until it captures, what is on the table
+        # is the order's outstanding balance.
+        amount = pay.amount
+        if amount <= 0 and order is not None:
+            amount = order.due_amount if order.due_amount else order.grand_total
         rows.append(
             AccountPaymentRead(
-                id=pay.id,
+                id=pay.payment_number or pay.id,
                 date=pay.payment_date.isoformat() if pay.payment_date else pay.created_at.strftime("%Y-%m-%d"),
                 order_id=pay.source_id,
                 order_number=order.order_number if order else "",
-                amount=pay.amount,
+                amount=amount,
                 method=pay.payment_method,
-                status=status_hint or ("Completed" if pay.direction == "inbound" else pay.direction),
+                status=settled or status_hint or ("Completed" if pay.direction == "inbound" else pay.direction),
                 trx_id=pay.reference,
                 customer_name=order.customer_name if order else customer.name,
                 customer_phone=order.customer_phone if order else customer.phone,
@@ -794,6 +955,10 @@ def get_wallet(
     )
 
 
+def _iso(value: Optional[datetime]) -> Optional[str]:
+    return value.isoformat() + "Z" if value else None
+
+
 @router.get("/cases", response_model=AccountCaseListResponse)
 def list_cases(
     case_type: Optional[str] = Query(default=None),
@@ -843,6 +1008,7 @@ def list_cases(
                 status=r.status,
                 manager_name=r.manager_name,
                 replies=_replies(r),
+                customer_seen_at=_iso(r.customer_seen_at),
             )
             for r in rows
         ]
@@ -914,6 +1080,7 @@ def create_case(
             status=row.status,
             manager_name=row.manager_name,
             replies=[],
+            customer_seen_at=_iso(row.customer_seen_at),
         )
     )
 
@@ -950,6 +1117,8 @@ def reply_case(
         }
     )
     row.replies_json = dump_json(replies)
+    # Replying is itself an acknowledgment — nothing older is still "unread".
+    row.customer_seen_at = datetime.utcnow()
     append_customer_timeline(
         customer,
         f"Replied on support case {row.case_number}",
@@ -997,5 +1166,63 @@ def reply_case(
             status=row.status,
             manager_name=row.manager_name,
             replies=_replies(row),
+            customer_seen_at=_iso(row.customer_seen_at),
+        )
+    )
+
+
+@router.post("/cases/{case_id}/seen", response_model=AccountCaseResponse)
+def mark_case_seen(
+    case_id: str,
+    ctx: CustomerAuthContext = Depends(get_current_storefront_customer),
+    db: Session = Depends(get_db),
+) -> AccountCaseResponse:
+    """Customer opened this case — clears the "admin replied" badge for it."""
+    _session, _identity, customer = ctx
+    row = db.get(StorefrontCustomerCase, case_id)
+    if not row or row.customer_id != customer.id:
+        raise HTTPException(status_code=404, detail="Case not found")
+
+    row.customer_seen_at = datetime.utcnow()
+    db.commit()
+    db.refresh(row)
+
+    def _replies(case: StorefrontCustomerCase) -> list[AccountCaseReplyRead]:
+        raw = load_json(getattr(case, "replies_json", None), [])
+        if not isinstance(raw, list):
+            return []
+        out: list[AccountCaseReplyRead] = []
+        for item in raw:
+            if not isinstance(item, dict):
+                continue
+            text = str(item.get("message") or "").strip()
+            if not text:
+                continue
+            out.append(
+                AccountCaseReplyRead(
+                    id=str(item.get("id") or ""),
+                    at=str(item.get("at") or ""),
+                    author=str(item.get("author") or "Support"),
+                    role=str(item.get("role") or "admin"),
+                    message=text,
+                )
+            )
+        return out
+
+    return AccountCaseResponse(
+        data=AccountCaseRead(
+            id=row.id,
+            case_number=row.case_number,
+            case_type=row.case_type,
+            date=row.created_at.strftime("%Y-%m-%d"),
+            order_id=row.order_id,
+            order_number=row.order_number,
+            subject=row.subject,
+            message=row.message,
+            product_label=row.product_label,
+            status=row.status,
+            manager_name=row.manager_name,
+            replies=_replies(row),
+            customer_seen_at=_iso(row.customer_seen_at),
         )
     )

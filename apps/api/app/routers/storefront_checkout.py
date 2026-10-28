@@ -21,6 +21,7 @@ from app.schemas.storefront import (
     StorefrontCheckoutTotalsRead,
     StorefrontEmiBankRead,
     StorefrontPaymentOptionRead,
+    StorefrontPickupPointRead,
     StorefrontPreparedPaymentRead,
     StorefrontShippingOptionRead,
 )
@@ -28,6 +29,7 @@ from app.services.site_resolver import request_site_options, resolve_site
 from app.services.storefront_site_options import commerce_option
 from app.services.ecommerce.checkout_tax_availability import (
     load_tax_settings,
+    shipping_is_taxable,
     tax_is_included_in_price,
     tax_rate_percent,
 )
@@ -58,6 +60,7 @@ def _place_request_from_payload(
         payment_method=payload.payment_method,
         coupon_code=payload.coupon_code,
         notes=payload.notes,
+        pickup_point=payload.pickup_point,
         # Always bind to the authenticated storefront customer — never trust client customer_id.
         customer_id=customer_id,
     )
@@ -70,6 +73,10 @@ def checkout_options(db: Session = Depends(get_db)) -> StorefrontCheckoutOptions
         data=StorefrontCheckoutOptionsRead(
             shipping_methods=[StorefrontShippingOptionRead(**m) for m in raw["shipping_methods"]],
             payment_methods=[StorefrontPaymentOptionRead(**m) for m in raw["payment_methods"]],
+            pickup_points=[
+                StorefrontPickupPointRead(**p) for p in (raw.get("pickup_points") or [])
+            ],
+            sub_districts=raw.get("sub_districts") or {},
             zones=list(raw.get("zones") or []),
             inside_zones=list(raw.get("inside_zones") or []),
             district_rates=raw.get("district_rates") or {},
@@ -81,6 +88,9 @@ def checkout_options(db: Session = Depends(get_db)) -> StorefrontCheckoutOptions
             tax_rate_percent=tax_rate_percent(db),
             tax_label=str(load_tax_settings(db).get("tax.label") or "VAT"),
             tax_included_in_price=tax_is_included_in_price(db),
+            tax_shipping_taxable=shipping_is_taxable(db),
+            checkout_notice_enabled=bool(raw.get("checkout_notice_enabled", False)),
+            checkout_notice_text=str(raw.get("checkout_notice_text") or ""),
         ),
     )
 

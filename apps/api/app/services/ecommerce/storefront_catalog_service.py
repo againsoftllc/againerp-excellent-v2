@@ -7,29 +7,26 @@ from dataclasses import dataclass
 from decimal import Decimal
 from typing import Callable, Dict, List, Optional, Tuple
 
-from sqlalchemy import and_, case, desc, func, or_, select
-from sqlalchemy.orm import Session, aliased
+from sqlalchemy import and_, case, desc, func, literal, or_
+from sqlalchemy.orm import Session
 
 from app.models.catalog_brand import CatalogBrand
 from app.models.catalog_category import CatalogCategory
 from app.models.catalog_product import CatalogProduct
 from app.models.catalog_attribute import CatalogAttribute
+from app.models.catalog_attribute_group import CatalogAttributeGroup
+from app.models.catalog_attribute_profile_category import CatalogAttributeProfileCategory
 from app.models.catalog_filter import CatalogFilter
 from app.models.catalog_product_attribute_value import CatalogProductAttributeValue
+from app.models.catalog_product_related import list_related_ids
 from app.models.commerce_order_item import CommerceOrderItem
 from app.models.ecommerce_item import EcommerceItem
 from app.models.ecommerce_item_category import EcommerceItemCategory
 from app.models.item import Item
 from app.schemas.attribute_profile import parse_json_list
 from app.services.ecommerce.constants import STOREFRONT_LIVE_STATUSES
+from app.services.ecommerce.constants import PREVIEW_VISIBLE_STATUSES
 from app.services.ecommerce.ecommerce_item_service import EcommerceItemService, StorefrontProductView
-
-
-def value_slug(value: str) -> str:
-    """A filter value as it appears in a shop URL: "AMD B650" → "amd-b650", "M.2" → "m-2", "FM2+" → "fm2plus".
-    The storefront's valueSlug (lib/shop/listing.ts) is the same function."""
-    s = (value or "").strip().lower().replace("+", "plus")
-    return re.sub(r"[^a-z0-9]+", "-", s).strip("-")
 
 
 SORT_NEWEST = "newest"
@@ -37,9 +34,53 @@ SORT_PRICE_ASC = "price_asc"
 SORT_PRICE_DESC = "price_desc"
 SORT_BESTSELLING = "bestselling"
 SORT_FEATURED = "featured"
-# what a shopper can buy first: in stock with a price → call for price (no price) →
-# pre-order / coming soon → out of stock; newest first inside each group
-SORT_AVAILABILITY = "availability"
+
+
+_SEARCH_STRIP = re.compile(r"[\"'“”″ʺ(),|/]+")
+
+
+def _search_clause(search: str):
+    """Word-based product search over name, slug, SKU and SEO title, in any order.
+
+    Words with a digit (model codes and sizes: K202Q, C6, AC1200, 19.5) must all match;
+    of the other words about 60% must — so a shop's own spelling of a product
+    ("Acer K202Q Bi 19.5 Inch HD Monitor", "… AC1200 Mbps … Router") still finds it."""
+    fields = (EcommerceItem.slug, Item.name, Item.sku, EcommerceItem.seo_title)
+    phrase = f"%{search.strip()}%"
+    whole = or_(*(f.ilike(phrase) for f in fields))
+    words = [w for w in _SEARCH_STRIP.sub(" ", search).split() if len(w) > 1 or w.isdigit()][:12]
+    if len(words) < 2:
+        return whole
+
+    def hit(word: str):
+        variants = [word]
+        if word.lower() in ("inch", "inches", "in"):
+            variants = ["inch", '"']  # names write 21.5", slugs write 21-5-inch
+        return or_(*(f.ilike(f"%{v}%") for f in fields for v in variants))
+
+    # A model code mixes letters and digits (K202Q, X50, AC1200, 1008a, 320Hz): one must match.
+    models = [w for w in words if any(ch.isdigit() for ch in w) and any(ch.isalpha() for ch in w)]
+    score = sum((case((hit(w), 1), else_=0) for w in words), literal(0))
+    need = max(2, -(-len(words) * 6 // 10))  # ceil(60%) of the words
+    fuzzy = score >= need
+    if models:
+        fuzzy = and_(or_(*(hit(w) for w in models)), fuzzy)
+    return or_(whole, fuzzy)
+
+
+def _search_rank(search: str):
+    """Best match first: the whole phrase, then whole-word hits in the slug (C6 beats C64), then any hit."""
+    fields = (EcommerceItem.slug, Item.name, Item.sku, EcommerceItem.seo_title)
+    phrase = f"%{search.strip()}%"
+    words = [w for w in _SEARCH_STRIP.sub(" ", search).split() if len(w) > 1 or w.isdigit()][:12]
+    rank = case((or_(*(f.ilike(phrase) for f in fields)), 100), else_=0)
+    for w in words:
+        token = re.sub(r"[^a-z0-9]+", "-", w.lower()).strip("-")
+        if not token:
+            continue
+        exact = or_(EcommerceItem.slug.ilike(f"%-{token}-%"), EcommerceItem.slug.ilike(f"{token}-%"), EcommerceItem.slug.ilike(f"%-{token}"))
+        rank = rank + case((exact, 3), else_=0) + case((or_(*(f.ilike(f"%{w}%") for f in fields)), 1), else_=0)
+    return rank
 
 
 @dataclass(frozen=True)
@@ -49,32 +90,26 @@ class StorefrontListResult:
 
 
 class StorefrontCatalogService:
-    def __init__(self, db: Session) -> None:
+    def __init__(self, db: Session, *, include_private: bool = False) -> None:
         self._db = db
         self._items = EcommerceItemService(db)
-
-    def _direct_query(self):
-        """Products reachable by their own URL: the listed ones plus unlisted ("hidden") ones — e.g. the
-        old shop's discontinued products, whose pages stayed online and indexed. Lists, search and
-        facets use _base_query, so these never show up there. Drafts stay unreachable."""
-        return (
-            self._db.query(EcommerceItem)
-            .join(Item, Item.id == EcommerceItem.item_id)
-            .filter(
-                EcommerceItem.publish_status.in_(STOREFRONT_LIVE_STATUSES | {"hidden"}),
-                EcommerceItem.visibility.in_(("public", "private")),
-            )
-        )
+        # Set only for a signed-in staff member previewing the shop, so a
+        # Published + Private product ("hidden") is reachable before going live.
+        self._include_private = include_private
 
     def _base_query(self):
-        return (
+        query = (
             self._db.query(EcommerceItem)
             .join(Item, Item.id == EcommerceItem.item_id)
             .filter(
-                EcommerceItem.publish_status.in_(STOREFRONT_LIVE_STATUSES),
-                EcommerceItem.visibility == "public",
+                EcommerceItem.publish_status.in_(
+                    PREVIEW_VISIBLE_STATUSES if self._include_private else STOREFRONT_LIVE_STATUSES
+                ),
             )
         )
+        if not self._include_private:
+            query = query.filter(EcommerceItem.visibility == "public")
+        return query
 
     def _apply_filters(
         self,
@@ -110,27 +145,14 @@ class StorefrontCatalogService:
         if brand_slug and not brand_id:
             brand = (
                 self._db.query(CatalogBrand)
-                .filter(CatalogBrand.slug == brand_slug, CatalogBrand.is_active.is_(True))
+                .filter(CatalogBrand.slug == brand_slug)
                 .first()
             )
-            # only a published brand has a page; an unlisted / draft / archived one shows nothing, not everything
-            brand_id = brand.id if brand else "__none__"
+            if brand:
+                brand_id = brand.id
 
         if search:
-            # every word has to match somewhere — name, slug, SKU, SEO title, brand or category — so
-            # "asus monitor" finds "ASUS ProArt Display … Monitor" (the whole phrase as one term found nothing)
-            for word in self._search_words(search):
-                term = f"%{word}%"
-                query = query.filter(
-                    (EcommerceItem.slug.ilike(term))
-                    | (Item.name.ilike(term))
-                    | (Item.sku.ilike(term))
-                    | (EcommerceItem.seo_title.ilike(term))
-                    | EcommerceItem.brand_id.in_(select(CatalogBrand.id).where(CatalogBrand.name.ilike(term)))
-                    | EcommerceItem.primary_category_id.in_(
-                        select(CatalogCategory.id).where(CatalogCategory.name.ilike(term)),
-                    ),
-                )
+            query = query.filter(_search_clause(search))
         if category_id:
             # A section page lists its whole branch — "Laptop" shows every laptop,
             # not only the ones pinned directly on the parent.
@@ -147,7 +169,7 @@ class StorefrontCatalogService:
             brand_ids = [
                 b.id
                 for b in self._db.query(CatalogBrand)
-                .filter(CatalogBrand.slug.in_(brand_slugs), CatalogBrand.is_active.is_(True))
+                .filter(CatalogBrand.slug.in_(brand_slugs))
                 .all()
             ]
             query = query.filter(EcommerceItem.brand_id.in_(brand_ids or ["__none__"]))
@@ -169,37 +191,33 @@ class StorefrontCatalogService:
                 CatalogProduct,
                 CatalogProduct.id == EcommerceItem.catalog_product_id,
             )
-            # the product's stock status when it has one (imported catalogues keep placeholder quantities and
-            # carry real availability in stock_status); otherwise quantity, and only tracked products run out
-            by_quantity = or_(
+            available = or_(
                 CatalogProduct.track_quantity.is_(False),
                 CatalogProduct.stock > 0,
             )
-            has_status = and_(CatalogProduct.stock_status.isnot(None), CatalogProduct.stock_status != "")
-            available = or_(
-                and_(has_status, CatalogProduct.stock_status == "in_stock"),
-                and_(~has_status, by_quantity),
+            # Only tracked products can actually be out of stock.
+            query = query.filter(
+                available
+                if in_stock
+                else and_(CatalogProduct.track_quantity.is_(True), CatalogProduct.stock <= 0),
             )
-            query = query.filter(available if in_stock else ~available)
         if attribute_filters:
             for code, values in attribute_filters.items():
                 cleaned = [v.strip() for v in values if v and v.strip()]
                 if not cleaned:
                     continue
-                # one filter code can be the same spec in several product-type profiles
-                attr_ids = [
-                    a_id
-                    for (a_id,) in self._db.query(CatalogAttribute.id)
+                attr = (
+                    self._db.query(CatalogAttribute)
                     .filter(CatalogAttribute.code == code, CatalogAttribute.is_filterable.is_(True))
-                    .all()
-                ]
-                if not attr_ids:
-                    # not a filter (a stray URL parameter such as utm_source read as one): ignored
+                    .first()
+                )
+                if not attr:
+                    query = query.filter(EcommerceItem.catalog_product_id == "__none__")
                     continue
                 matching_ids = {
                     row.product_id
                     for row in self._db.query(CatalogProductAttributeValue)
-                    .filter(CatalogProductAttributeValue.attribute_id.in_(attr_ids))
+                    .filter(CatalogProductAttributeValue.attribute_id == attr.id)
                     .all()
                     if self._value_matches_options(row.value or "", cleaned)
                 }
@@ -209,65 +227,17 @@ class StorefrontCatalogService:
         return query
 
     @staticmethod
-    def _search_words(search: str) -> List[str]:
-        """Search words (up to 8): "monitors" also finds "Monitor"; LIKE wildcards are taken literally."""
-        words = []
-        for raw in search.split()[:8]:
-            w = raw.strip(" ,.;:!?()\"'").replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
-            if len(w) > 4 and w.lower().endswith("s") and not w.lower().endswith("ss"):
-                w = w[:-1]
-            if w:
-                words.append(w)
-        return words or [search.strip()]
-
-    @staticmethod
     def _value_matches_options(stored: str, options: List[str]) -> bool:
-        """A product's value matches when it, or one of its comma-separated parts, is a wanted option — compared
-        as URL slugs, so the shop's readable filter links (?chipset=amd-b650&special-feature=m-2) and the values
-        themselves ("AMD B650", "M.2") both match."""
-        wanted = {value_slug(o) for o in options}
-        if value_slug(stored) in wanted:
+        if stored in options:
             return True
-        return any(value_slug(p) in wanted for p in stored.split(",") if p.strip())
-
-    @staticmethod
-    def _stock_rank():
-        """0 = in stock, 1 = not — the same rule as the product views' `in_stock` (out of stock / coming soon
-        by status, or a tracked quantity at 0; no catalogue product counts as out). An aliased, correlated
-        subquery, so it never clashes with a filter's join on the catalogue product."""
-        cp = aliased(CatalogProduct)
-        out = or_(
-            func.lower(func.coalesce(cp.stock_status, "")).in_(("out_of_stock", "coming_soon")),
-            and_(cp.track_quantity.is_(True), cp.stock <= 0),
-        )
-        rank = select(case((out, 1), else_=0)).where(cp.id == EcommerceItem.catalog_product_id).correlate(EcommerceItem).scalar_subquery()
-        return func.coalesce(rank, 1)
+        parts = [p.strip() for p in stored.split(",") if p.strip()]
+        return any(opt in parts for opt in options)
 
     def _apply_sort(self, query, sort: str):
-        # every list — category, brand, search, home rails — shows what can be bought first, whatever the sort
-        query = query.order_by(self._stock_rank())
         if sort == SORT_PRICE_ASC:
             return query.order_by(EcommerceItem.selling_price.asc(), EcommerceItem.slug)
         if sort == SORT_PRICE_DESC:
             return query.order_by(EcommerceItem.selling_price.desc(), EcommerceItem.slug)
-        if sort == SORT_AVAILABILITY:
-            # stock status lives on the catalogue product; an aliased, explicitly correlated subquery keeps
-            # this clear of the in-stock filter's join on the same table (unaliased, the subquery correlated
-            # CatalogProduct too and lost its FROM — "In stock" + default sort answered 500)
-            cp = aliased(CatalogProduct)
-            stock = (
-                select(cp.stock_status)
-                .where(cp.id == EcommerceItem.catalog_product_id)
-                .correlate(EcommerceItem)
-                .scalar_subquery()
-            )
-            rank = case(
-                (or_(EcommerceItem.selling_price.is_(None), EcommerceItem.selling_price <= 0), 1),
-                (stock == "in_stock", 0),
-                (stock.in_(("pre_order", "coming_soon")), 2),
-                else_=3,
-            )
-            return query.order_by(rank, desc(EcommerceItem.updated_at), EcommerceItem.slug)
         if sort == SORT_FEATURED:
             return query.order_by(
                 desc(EcommerceItem.featured),
@@ -307,11 +277,9 @@ class StorefrontCatalogService:
         in_stock: Optional[bool] = None,
         attribute_filters: Optional[Dict[str, List[str]]] = None,
         sort: str = SORT_NEWEST,
-        include_hidden: bool = False,
     ) -> StorefrontListResult:
-        # include_hidden: the sitemap lists every product page that answers, unlisted ones too
         query = self._apply_filters(
-            self._direct_query() if include_hidden else self._base_query(),
+            self._base_query(),
             search=search,
             category_id=category_id,
             category_slug=category_slug,
@@ -326,48 +294,34 @@ class StorefrontCatalogService:
             attribute_filters=attribute_filters,
         )
         total = query.count()
+        if search:
+            # Relevance first; the chosen sort orders products that match equally well.
+            query = query.order_by(desc(_search_rank(search)))
         rows = (
             self._apply_sort(query, sort)
             .offset((page - 1) * per_page)
             .limit(per_page)
             .all()
         )
-        _held = self._preload(rows)  # noqa: F841 — keeps the batch-loaded rows in the session while views are built
-        views = [v for ec in rows if (v := self._items.resolve_storefront_from_ecommerce(ec, unlisted_ok=include_hidden))]
+        self._items.preload_for_items(rows)
+        views = [v for ec in rows if (v := self._items.resolve_storefront_from_ecommerce(ec))]
         return StorefrontListResult(items=views, total=total)
-
-    def _preload(self, rows: List[EcommerceItem]) -> list:
-        """Load the products, items, brands and categories of a page of rows in four queries.
-
-        resolve_storefront_from_ecommerce looks each one up with Session.get, which answers from the
-        session's identity map — so one batch per table instead of four queries per product. The
-        returned list holds the rows (the identity map only keeps weak references)."""
-        held: list = []
-        for model, ids in (
-            (CatalogProduct, {r.catalog_product_id for r in rows if r.catalog_product_id}),
-            (Item, {r.item_id for r in rows if r.item_id}),
-            (CatalogBrand, {r.brand_id for r in rows if r.brand_id}),
-            (CatalogCategory, {r.primary_category_id for r in rows if r.primary_category_id}),
-        ):
-            if ids:
-                held.extend(self._db.query(model).filter(model.id.in_(ids)).all())
-        return held
 
     def get_by_slug(self, slug: str) -> Optional[StorefrontProductView]:
         ec = (
-            self._direct_query()
+            self._base_query()
             .filter(EcommerceItem.slug == slug)
             .first()
         )
         if not ec:
             return None
-        view = self._items.resolve_storefront_from_ecommerce(ec, unlisted_ok=True)
+        view = self._items.resolve_storefront_from_ecommerce(ec, allow_preview=self._include_private)
         if not view or view.slug != slug:
             return None
         return view
 
     def get_ec_by_slug(self, slug: str) -> Optional[EcommerceItem]:
-        return self._direct_query().filter(EcommerceItem.slug == slug).first()
+        return self._base_query().filter(EcommerceItem.slug == slug).first()
 
     def featured(self, *, limit: int = 12) -> List[StorefrontProductView]:
         result = self.list_products(featured=True, sort=SORT_FEATURED, per_page=limit, page=1)
@@ -467,6 +421,114 @@ class StorefrontCatalogService:
                 ordered.append(cid)
         return ordered
 
+    def _ordered_product_ids_in_category(self, category_id: str, exclude_item_id: str) -> List[str]:
+        """Products in this category that customers have actually ordered, most
+        ordered first. This is the "chosen by customers like you" signal — it is
+        catalog-wide popularity, not the viewer's own history, since the shop is
+        browsed signed-out most of the time."""
+        rows = (
+            self._db.query(
+                CommerceOrderItem.product_id,
+                func.count(CommerceOrderItem.id).label("times"),
+            )
+            .join(CatalogProduct, CatalogProduct.id == CommerceOrderItem.product_id)
+            .join(EcommerceItem, EcommerceItem.catalog_product_id == CatalogProduct.id)
+            .filter(
+                EcommerceItem.primary_category_id == category_id,
+                EcommerceItem.item_id != exclude_item_id,
+            )
+            .group_by(CommerceOrderItem.product_id)
+            .order_by(desc("times"))
+            .all()
+        )
+        return [row.product_id for row in rows]
+
+    def more_to_love(self, slug: str, *, limit: int = 6) -> List[StorefrontProductView]:
+        """Similar products for the product page's "More to love" row.
+
+        Same category first — the ones customers have ordered ahead of the rest —
+        then the remaining products of that category, and only if the category is
+        too thin does it widen to the same brand.
+        """
+        ec = self.get_ec_by_slug(slug)
+        if not ec or limit <= 0:
+            return []
+
+        collected: List[StorefrontProductView] = []
+        seen: set[str] = {ec.item_id}
+
+        def _append(rows: List[EcommerceItem]) -> None:
+            self._items.preload_for_items(rows)
+            for row in rows:
+                if len(collected) >= limit:
+                    return
+                if row.item_id in seen:
+                    continue
+                view = self._items.resolve_storefront_from_ecommerce(row)
+                if not view:
+                    continue
+                seen.add(row.item_id)
+                collected.append(view)
+
+        # _base_query already drops anything not live on the shop, so a product
+        # that has since been Disabled or Archived cannot come back through the
+        # order history.
+        base = self._base_query().filter(EcommerceItem.item_id != ec.item_id)
+        order = (desc(EcommerceItem.featured), desc(EcommerceItem.updated_at))
+
+        if ec.primary_category_id:
+            ordered_ids = self._ordered_product_ids_in_category(
+                ec.primary_category_id, ec.item_id
+            )
+            if ordered_ids:
+                rows = base.filter(EcommerceItem.catalog_product_id.in_(ordered_ids)).all()
+                rank = {pid: idx for idx, pid in enumerate(ordered_ids)}
+                rows.sort(key=lambda r: rank.get(r.catalog_product_id, len(rank)))
+                _append(rows)
+
+            if len(collected) < limit:
+                _append(
+                    base.filter(EcommerceItem.primary_category_id == ec.primary_category_id)
+                    .order_by(*order)
+                    .limit(limit * 2)
+                    .all(),
+                )
+
+        if len(collected) < limit and ec.brand_id:
+            _append(
+                base.filter(EcommerceItem.brand_id == ec.brand_id)
+                .order_by(*order)
+                .limit(limit * 2)
+                .all(),
+            )
+
+        return collected[:limit]
+
+    def paired(self, slug: str, *, limit: int = 8) -> List[StorefrontProductView]:
+        """Manually chosen pairs from the product form. Empty means the shop
+        falls back to auto-picked related products under a different heading."""
+        ec = self.get_ec_by_slug(slug)
+        if not ec or not ec.catalog_product_id:
+            return []
+        ids = list_related_ids(self._db, ec.catalog_product_id)
+        if not ids:
+            return []
+        rows = (
+            self._base_query()
+            .filter(EcommerceItem.catalog_product_id.in_(ids))
+            .all()
+        )
+        rank = {pid: idx for idx, pid in enumerate(ids)}
+        rows.sort(key=lambda r: rank.get(r.catalog_product_id, len(rank)))
+        limited = rows[:limit]
+        self._items.preload_for_items(limited)
+        out: List[StorefrontProductView] = []
+        for row in limited:
+            view = self._items.resolve_storefront_from_ecommerce(row)
+            if view:
+                out.append(view)
+        return out
+
     def related(self, slug: str, *, limit: int = 8) -> List[StorefrontProductView]:
         """Auto-related products: same category tree → same brand in-tree (no random global fill)."""
         ec = self.get_ec_by_slug(slug)
@@ -477,6 +539,7 @@ class StorefrontCatalogService:
         seen: set[str] = {ec.item_id}
 
         def _append(rows: List[EcommerceItem]) -> None:
+            self._items.preload_for_items(rows)
             for row in rows:
                 if row.item_id in seen:
                     continue
@@ -489,7 +552,7 @@ class StorefrontCatalogService:
                     return
 
         base = self._base_query().filter(EcommerceItem.item_id != ec.item_id)
-        order = (self._stock_rank(), desc(EcommerceItem.featured), desc(EcommerceItem.updated_at))
+        order = (desc(EcommerceItem.featured), desc(EcommerceItem.updated_at))
         related_cat_ids = self._category_related_ids(ec.primary_category_id)
 
         # 1) Exact same category
@@ -522,7 +585,7 @@ class StorefrontCatalogService:
                 .all(),
             )
 
-        return sorted(collected[:limit], key=lambda v: 0 if v.in_stock else 1)  # in stock first, order kept within
+        return collected[:limit]
 
     def facets(
         self,
@@ -541,6 +604,25 @@ class StorefrontCatalogService:
         Counts narrow with the active filters. A group never constrains itself, so
         the shopper can still see the other options inside the group they just used.
         """
+
+        # Resolved once so the attribute-profile category scoping below (which
+        # category is actually being browsed) and the product query (which
+        # matches the whole branch under it) agree on the same category.
+        resolved_category_id = category_id
+        if category_slug and not resolved_category_id:
+            from sqlalchemy import case
+
+            cat = (
+                self._db.query(CatalogCategory)
+                .filter(CatalogCategory.slug == category_slug)
+                .order_by(
+                    case((CatalogCategory.channel == "catalog", 0), else_=1),
+                    CatalogCategory.sort_order.asc(),
+                )
+                .first()
+            )
+            if cat:
+                resolved_category_id = cat.id
 
         def scoped(
             *,
@@ -582,11 +664,7 @@ class StorefrontCatalogService:
         )
         brands = []
         if brand_counts:
-            for brand in (
-                self._db.query(CatalogBrand)
-                .filter(CatalogBrand.id.in_(brand_counts.keys()), CatalogBrand.is_active.is_(True))
-                .all()
-            ):
+            for brand in self._db.query(CatalogBrand).filter(CatalogBrand.id.in_(brand_counts.keys())).all():
                 brands.append(
                     {
                         "id": brand.id,
@@ -597,27 +675,18 @@ class StorefrontCatalogService:
                 )
             brands.sort(key=lambda b: b["name"])
 
-        # A group is counted against the other groups' filters only, so only the
-        # groups that are filtered right now need their own product set; every
-        # other group shares one. (Per-group queries made a 13k-product catalogue's
-        # facets take ~20 s with ~80 filterable attributes.)
-        id_sets: Dict[Optional[str], List[str]] = {}
-
         def product_ids_for(attr_code: str) -> List[str]:
-            key = attr_code if attr_code in (attribute_filters or {}) else None
-            if key not in id_sets:
-                id_sets[key] = [
-                    pid
-                    for (pid,) in scoped(skip_attr_code=key)
-                    .with_entities(EcommerceItem.catalog_product_id)
-                    .filter(EcommerceItem.catalog_product_id.isnot(None))
-                    .distinct()
-                    .all()
-                    if pid
-                ]
-            return id_sets[key]
+            return [
+                pid
+                for (pid,) in scoped(skip_attr_code=attr_code)
+                .with_entities(EcommerceItem.catalog_product_id)
+                .filter(EcommerceItem.catalog_product_id.isnot(None))
+                .distinct()
+                .all()
+                if pid
+            ]
 
-        attributes = self._attribute_facets(product_ids_for)
+        attributes = self._attribute_facets(product_ids_for, resolved_category_id)
 
         return {
             "brands": brands,
@@ -626,7 +695,11 @@ class StorefrontCatalogService:
             "attributes": attributes,
         }
 
-    def _attribute_facets(self, product_ids_for: Callable[[str], List[str]]) -> List[dict]:
+    def _attribute_facets(
+        self,
+        product_ids_for: Callable[[str], List[str]],
+        category_id: Optional[str] = None,
+    ) -> List[dict]:
         configured = (
             self._db.query(CatalogFilter)
             .filter(
@@ -636,6 +709,14 @@ class StorefrontCatalogService:
             .order_by(CatalogFilter.sort_order.asc(), CatalogFilter.name.asc())
             .all()
         )
+        # attribute_id → (visible, sort_order). Missing config ⇒ use attribute storefront flag.
+        filter_cfg: Dict[str, Tuple[bool, int]] = {}
+        for row in configured:
+            if not row.attribute_id:
+                continue
+            visible = bool(row.is_active and row.storefront_visible)
+            filter_cfg[row.attribute_id] = (visible, int(row.sort_order or 0))
+
         attrs = (
             self._db.query(CatalogAttribute)
             .filter(
@@ -645,119 +726,144 @@ class StorefrontCatalogService:
             .order_by(CatalogAttribute.sort_order.asc(), CatalogAttribute.name.asc())
             .all()
         )
-        # A filter is a code: the same spec can be an attribute in several product-type profiles,
-        # and they share one facet. Its Catalog → Filters row (any of its attributes) sets the order
-        # and visibility; without one, the attribute's storefront flag decides.
-        code_of = {a.id: a.code for a in attrs}
-        code_cfg: Dict[str, Tuple[bool, int, object]] = {}
-        for row in configured:
-            code = code_of.get(row.attribute_id or "")
-            if code and code not in code_cfg:
-                code_cfg[code] = (bool(row.is_active and row.storefront_visible), int(row.sort_order or 0), row)
         attrs = [
             a
             for a in attrs
-            if code_cfg.get(a.code, (bool(getattr(a, "storefront_filter_visible", True)), 0, None))[0]
+            if filter_cfg.get(
+                a.id,
+                (bool(getattr(a, "storefront_filter_visible", True)), a.sort_order or 0),
+            )[0]
         ]
-        attrs.sort(key=lambda a: (code_cfg.get(a.code, (True, 10_000 + (a.sort_order or 0), None))[1], a.name))
+        attrs.sort(
+            key=lambda a: (
+                filter_cfg.get(
+                    a.id,
+                    (True, 10_000 + (a.sort_order or 0)),
+                )[1],
+                a.name,
+            ),
+        )
+
+        # Category-scope by attribute profile: a profile with no configured
+        # categories is unscoped (shown everywhere, same as before). Once an
+        # admin picks categories for a profile (e.g. "Processor Specs" →
+        # "Processor" only), its attributes only appear while browsing one of
+        # those exact categories — so they no longer leak into a broader
+        # parent category that also holds a sibling type (e.g. "Component",
+        # which also contains "Casing" products).
+        if category_id and attrs:
+            group_ids = {a.group_id for a in attrs}
+            profile_by_group: Dict[str, str] = dict(
+                self._db.query(CatalogAttributeGroup.id, CatalogAttributeGroup.profile_id)
+                .filter(CatalogAttributeGroup.id.in_(group_ids))
+                .all(),
+            )
+            profile_ids = set(profile_by_group.values())
+            raw_categories_by_profile: Dict[str, set] = {}
+            if profile_ids:
+                for pid, cid in (
+                    self._db.query(
+                        CatalogAttributeProfileCategory.profile_id,
+                        CatalogAttributeProfileCategory.category_id,
+                    )
+                    .filter(CatalogAttributeProfileCategory.profile_id.in_(profile_ids))
+                    .all()
+                ):
+                    raw_categories_by_profile.setdefault(pid, set()).add(cid)
+
+            # Scoping a profile to a category also covers every category below
+            # it — picking "Casing" applies to "Casing → Mid Tower" too, not
+            # just the exact node an admin ticked.
+            branch_cache: Dict[str, List[str]] = {}
+
+            def _branch(cid: str) -> List[str]:
+                if cid not in branch_cache:
+                    branch_cache[cid] = self._category_branch_ids(cid)
+                return branch_cache[cid]
+
+            categories_by_profile: Dict[str, set] = {
+                pid: {cid for raw in raw_ids for cid in _branch(raw)}
+                for pid, raw_ids in raw_categories_by_profile.items()
+            }
+
+            def _profile_allows(attr: CatalogAttribute) -> bool:
+                profile_id = profile_by_group.get(attr.group_id)
+                scoped_categories = categories_by_profile.get(profile_id) if profile_id else None
+                if not scoped_categories:
+                    return True
+                return category_id in scoped_categories
+
+            attrs = [a for a in attrs if _profile_allows(a)]
+
         if not attrs:
             return []
 
-        # Values of every attribute that shares a product set, in one query per set.
-        by_set: Dict[int, Tuple[List[str], List[str]]] = {}
-        for attr in attrs:
-            ids = product_ids_for(attr.code)
-            by_set.setdefault(id(ids), (ids, []))[1].append(attr.id)
-        values: Dict[str, List[Tuple[str, str]]] = {}
-        for ids, attr_ids in by_set.values():
-            if not ids:
-                continue
-            rows = (
-                self._db.query(
-                    CatalogProductAttributeValue.attribute_id,
-                    CatalogProductAttributeValue.product_id,
-                    CatalogProductAttributeValue.value,
-                )
-                .filter(
-                    CatalogProductAttributeValue.attribute_id.in_(attr_ids),
-                    CatalogProductAttributeValue.product_id.in_(ids),
-                )
-                .all()
-            )
-            for attr_id, product_id, value in rows:
-                values.setdefault(attr_id, []).append((product_id, value))
-
-        # one facet per code: every attribute with that code (one per product-type profile) feeds it
-        members: Dict[str, List[CatalogAttribute]] = {}
-        for attr in attrs:
-            members.setdefault(attr.code, []).append(attr)
-
         out: List[dict] = []
-        place: Dict[str, Tuple[int, str]] = {}
-        for code, group in members.items():
-            # the attribute of the product type this listing shows most of leads: its label, its place among
-            # the filters (each type lists its own filters in its own order)
-            lead = max(group, key=lambda a: len(values.get(a.id, [])))
-            with_value = {pid for a in group for pid, v in values.get(a.id, []) if (v or "").strip()}
-            listed = product_ids_for(code)
-            # a filter only a few listed products carry (a keyboard filed under mice) is noise here
-            if listed and len(with_value) < max(2, 0.10 * len(listed)):
-                continue
-            place[code] = (int(lead.sort_order or 0), lead.name)
+        for attr in attrs:
+            # Each group is counted against the other groups' filters only.
+            product_ids = product_ids_for(attr.code)
             seen: Dict[str, set] = {}
-            label_of: Dict[str, str] = {}
-            for attr in group:
-                for product_id, value in values.get(attr.id, []):
-                    raw = (value or "").strip()
+            if product_ids:
+                value_rows = (
+                    self._db.query(CatalogProductAttributeValue)
+                    .filter(
+                        CatalogProductAttributeValue.product_id.in_(product_ids),
+                        CatalogProductAttributeValue.attribute_id == attr.id,
+                    )
+                    .all()
+                )
+                for row in value_rows:
+                    raw = (row.value or "").strip()
                     if not raw:
                         continue
-                    for part in [p.strip() for p in raw.split(",") if p.strip()] or [raw]:
-                        key = part.lower()
-                        label_of.setdefault(key, part)
-                        seen.setdefault(key, set()).add(product_id)
+                    parts = [p.strip() for p in raw.split(",") if p.strip()] or [raw]
+                    for part in parts:
+                        seen.setdefault(part, set()).add(row.product_id)
 
-            # The filter's options are its attributes' options (filter values, plus every value an admin
-            # saves on a product). Free spec text outside them stays a spec, not a filter choice; a filter
-            # without options (dynamic) lists whatever products carry.
-            predefined: List[str] = []
-            # a code shared by product types (capacity: RAM, SSD, HDD) lists its options in the order of the type
-            # this listing shows most of
-            for attr in sorted(group, key=lambda a: -len(values.get(a.id, []))):
-                for val in parse_json_list(attr.predefined_values):
-                    if val.lower() not in {p.lower() for p in predefined}:
-                        predefined.append(val)
-            if predefined:
-                ordered = [(v.lower(), v) for v in predefined]
-            else:
-                ordered = [(k, label_of[k]) for k in sorted(seen)]
-            options = [
-                {"value": val, "label": val.replace("_", " "), "count": len(seen[key])}
-                for key, val in ordered
-                if seen.get(key)
-            ]
-
-            cfg_row = code_cfg.get(code, (True, 0, None))[2]
-            # single_select (radio) or multi_select (checkboxes) - the attribute's own kind unless the filter row says
-            # otherwise; range / boolean stay for the built-in filters; older values (color, dynamic ...) read as single
-            own = "multi_select" if getattr(lead, "field_type", "") == "multi_select" else "single_select"
-            display_type = (cfg_row.display_type if cfg_row is not None and cfg_row.display_type else None) or own
-            if display_type not in ("single_select", "multi_select", "range", "boolean"):
-                display_type = own
-            if display_type == "boolean" and not options and seen:
-                options = [
-                    {"value": label_of[k], "label": label_of[k].replace("_", " "), "count": len(pids)}
-                    for k, pids in sorted(seen.items())
-                ]
+            predefined = parse_json_list(attr.predefined_values)
+            ordered_values: List[str] = []
+            for val in predefined:
+                if val not in ordered_values:
+                    ordered_values.append(val)
+            for val in sorted(seen.keys()):
+                if val not in ordered_values:
+                    ordered_values.append(val)
+            options = []
+            for val in ordered_values:
+                count = len(seen.get(val, set()))
+                if count <= 0:
+                    continue
+                options.append(
+                    {
+                        "value": val,
+                        "label": val.replace("_", " "),
+                        "count": count,
+                    },
+                )
+            display_type = getattr(attr, "filter_display_type", None) or "multi_select"
+            # Prefer Catalog Filters display type when present (Filters page edits).
+            cfg_row = next((r for r in configured if r.attribute_id == attr.id), None)
+            if cfg_row and cfg_row.display_type:
+                display_type = cfg_row.display_type
+            if display_type == "boolean":
+                # Always expose yes/no style options when boolean and any values exist.
+                if not options and seen:
+                    for val, pids in sorted(seen.items()):
+                        options.append(
+                            {
+                                "value": val,
+                                "label": val.replace("_", " "),
+                                "count": len(pids),
+                            },
+                        )
             if not options and display_type not in ("range", "boolean"):
                 continue
-            if len(options) < 2 and display_type not in ("range", "boolean"):
-                continue  # one choice is no choice
             if not options and display_type == "range":
                 # Range still shown when numeric product values exist (options carry bounds).
                 nums = []
-                for key, pids in seen.items():
+                for val, pids in seen.items():
                     try:
-                        nums.append((float("".join(ch for ch in key if ch.isdigit() or ch == ".")), len(pids)))
+                        nums.append((float("".join(ch for ch in val if ch.isdigit() or ch == ".")), len(pids)))
                     except ValueError:
                         continue
                 if not nums:
@@ -770,15 +876,13 @@ class StorefrontCatalogService:
                 ]
             out.append(
                 {
-                    "id": lead.id,
-                    "code": code,
-                    "name": cfg_row.name if cfg_row is not None else lead.name,
+                    "id": attr.id,
+                    "code": attr.code,
+                    "name": attr.name,
                     "display_type": display_type,
                     "options": options,
                 },
             )
-        # each product type's filters in its own order (its Key Specifications order)
-        out.sort(key=lambda f: place.get(f["code"], (10_000, "")))
         return out
 
     def filter_attributes_for_products(self, product_ids: List[str]) -> Dict[str, Dict[str, str]]:
@@ -873,21 +977,24 @@ class StorefrontCatalogService:
 
         return [node(row) for row in by_parent.get(None, [])]
 
-    def list_brands(self, channel: str = "dropshipping") -> List[dict]:
+    def list_brands(self) -> List[dict]:
         """Active brands for storefront brand strip / nav.
 
-        channel: ``catalog`` (own-stock brands) or ``dropshipping`` (frontstore strip).
+        Prefer the Catalog channel (storefront). Fall back to dropshipping
+        leftovers only when no catalog brands are active.
         """
-        channel_key = channel if channel in ("catalog", "dropshipping") else "dropshipping"
-        rows = (
-            self._db.query(CatalogBrand)
-            .filter(
-                CatalogBrand.is_active.is_(True),
-                CatalogBrand.channel == channel_key,
+        def fetch(channel: str):
+            return (
+                self._db.query(CatalogBrand)
+                .filter(
+                    CatalogBrand.is_active.is_(True),
+                    CatalogBrand.channel == channel,
+                )
+                .order_by(CatalogBrand.sort_order.asc(), CatalogBrand.name.asc())
+                .all()
             )
-            .order_by(CatalogBrand.sort_order.asc(), CatalogBrand.name.asc())
-            .all()
-        )
+
+        rows = fetch("catalog") or fetch("dropshipping")
         return [
             {
                 "id": row.id,
@@ -903,6 +1010,40 @@ class StorefrontCatalogService:
         normalized = slug.strip().lower()
         if not normalized:
             return None
+
+        # Legacy / demo menu slugs → current catalog_categories.slug values
+        category_aliases = {
+            "laptop-notebook": "laptop",
+            "desktops": "desktop",
+            "desktop-pc": "desktop",
+            "component": "pc-component",
+            "components": "pc-component",
+            "accessories": "pc-accessory",
+            "pc-accessories": "pc-accessory",
+            "tablet": "tablet-pc",
+            "tablets": "tablet-pc",
+            "networking": "network",
+            "security": "security-system",
+            "gadget": "it-gadget",
+            "gadgets": "it-gadget",
+            "printer": "office",
+            "printers": "office",
+        }
+        # Only remap legacy demo slugs when this storefront does not already
+        # have a live category with that slug (the storefront uses /desktops, /component).
+        category_lookup = normalized
+        aliased = category_aliases.get(normalized)
+        if aliased and aliased != normalized:
+            existing = (
+                self._db.query(CatalogCategory.id)
+                .filter(
+                    CatalogCategory.slug == normalized,
+                    CatalogCategory.is_active.is_(True),
+                )
+                .first()
+            )
+            if existing is None:
+                category_lookup = aliased
 
         product = self.get_by_slug(normalized)
         if product:
@@ -922,7 +1063,7 @@ class StorefrontCatalogService:
         category = (
             self._db.query(CatalogCategory)
             .filter(
-                CatalogCategory.slug == normalized,
+                CatalogCategory.slug == category_lookup,
                 CatalogCategory.is_active.is_(True),
             )
             .order_by(
@@ -934,7 +1075,7 @@ class StorefrontCatalogService:
         if category:
             return {
                 "type": "category",
-                "slug": normalized,
+                "slug": category.slug,
                 "category": {
                     "id": category.id,
                     "slug": category.slug,

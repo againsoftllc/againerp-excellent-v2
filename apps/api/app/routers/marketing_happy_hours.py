@@ -252,3 +252,21 @@ def delete_happy_hour(
         raise HTTPException(status_code=404, detail="Happy Hour not found")
     db.delete(row)
     db.commit()
+
+
+def disable_happy_hour_deal_by_slug(db: Session, campaign_id: str, product_slug: str) -> None:
+    """Called when this deal's mirrored special sells out its quota (see
+    storefront_checkout_service._consume_special_quota) — turns the deal off
+    so its price stops applying, without removing it from the section."""
+    deal = (
+        db.query(MarketingHappyHourDeal)
+        .join(MarketingHappyHourSection, MarketingHappyHourDeal.section_id == MarketingHappyHourSection.id)
+        .filter(
+            MarketingHappyHourSection.campaign_id == campaign_id,
+            MarketingHappyHourDeal.product_slug == product_slug,
+        )
+        .first()
+    )
+    if deal and deal.enabled:
+        deal.enabled = False
+        db.flush()

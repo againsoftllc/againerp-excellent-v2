@@ -40,6 +40,8 @@ THEME_FIELDS: tuple[str, ...] = (
     "header_background",
     "footer_background",
     "font_family",
+    "dark_mode_mode",
+    "dark_mode_default",
 )
 
 META_FIELDS: tuple[str, ...] = (
@@ -147,6 +149,29 @@ def _memberships(raw: Any) -> List[Dict[str, str]]:
     return out
 
 
+def _footer_links(raw: Any) -> List[Dict[str, Any]]:
+    items = raw if isinstance(raw, list) else []
+    out: List[Dict[str, Any]] = []
+    for item in items:
+        row = _dict(item)
+        label = _text(row.get("label"))
+        href = _text(row.get("href"))
+        if not label or not href:
+            continue
+        link_type = _text(row.get("link_type")) or "custom"
+        out.append(
+            {
+                "id": _text(row.get("id")) or "",
+                "label": label,
+                "href": href,
+                "hidden": bool(row.get("hidden")),
+                "page_id": _text(row.get("page_id")) or None,
+                "link_type": link_type,
+            }
+        )
+    return out
+
+
 def build_commerce_options(options: Dict[str, Any] | None) -> Dict[str, Any]:
     """Review / checkout / price gates from the admin Option tab."""
     data = _dict(options)
@@ -178,6 +203,8 @@ def build_storefront_options(options: Dict[str, Any] | None) -> Dict[str, Any]:
             "support_hours": _text(footer.get("support_hours")),
             "payment_image": _text(footer.get("payment_image")),
             "memberships": _memberships(footer.get("memberships")),
+            "information_title": _text(footer.get("information_title")),
+            "links": _footer_links(footer.get("links")),
         },
         "social": {name: _text(social.get(name)) for name in SOCIAL_NETWORKS},
         "theme": {field: _text(theme.get(field)) for field in THEME_FIELDS},

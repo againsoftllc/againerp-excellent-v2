@@ -21,3 +21,7 @@ def verify_password(password: str, stored: str) -> bool:
 
 def new_session_token() -> str:
     return secrets.token_urlsafe(32)
+
+
+def new_download_token() -> str:
+    return secrets.token_urlsafe(32)

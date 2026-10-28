@@ -17,7 +17,10 @@ from app.models.platform_setting import PlatformSetting
 ACCOUNT_MENU_DEFAULTS: Dict[str, bool] = {
     "wishlist": True,
     "payments": True,
-    "returns": True,
+    # Refunds: a request lands in commerce_order_refunds and stays "pending"
+    # forever — there is no admin screen to approve one and no money ever moves.
+    # Off until that exists, so the panel does not promise what it cannot do.
+    "returns": False,
     "qc": False,
     "complain": False,
     "support": False,

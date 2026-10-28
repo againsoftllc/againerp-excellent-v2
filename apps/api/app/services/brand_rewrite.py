@@ -1,4 +1,4 @@
-"""Rewrite competitor (Star Tech) branding to Againcart in HTML/text."""
+"""Rewrite competitor (Star Tech) branding to Excellent Technology BD in HTML/text."""
 
 from __future__ import annotations
 
@@ -12,9 +12,9 @@ STARTECH_HOST_RE = re.compile(
     re.IGNORECASE,
 )
 BRAND_PATTERNS: list[tuple[re.Pattern[str], str]] = [
-    (re.compile(r"\bStar\s*Tech\b", re.IGNORECASE), "Againcart"),
-    (re.compile(r"\bStarTech\b", re.IGNORECASE), "Againcart"),
-    (re.compile(r"\bstartech\b", re.IGNORECASE), "Againcart"),
+    (re.compile(r"\bStar\s*Tech\b", re.IGNORECASE), "Excellent Technology BD"),
+    (re.compile(r"\bStarTech\b", re.IGNORECASE), "Excellent Technology BD"),
+    (re.compile(r"\bstartech\b", re.IGNORECASE), "Excellent Technology BD"),
 ]
 ABS_URL_RE = re.compile(
     r"""https?://(?:www\.)?startech\.com(?:\.bd)?(/[^\s"'<>]*)?""",
@@ -36,8 +36,11 @@ def storefront_base() -> str:
     return base or "http://localhost:3010"
 
 
-def againcart_logo_url() -> str:
-    return f"{storefront_base()}/images/againcart-logo.png"
+def site_logo_url() -> str:
+    return f"{storefront_base()}/images/logo.png"
+
+
+againcart_logo_url = site_logo_url  # backward-compat alias
 
 
 def _rewrite_abs_url(match: re.Match[str]) -> str:
@@ -59,13 +62,13 @@ def _rewrite_proto_rel(match: re.Match[str]) -> str:
 
 def _rewrite_img(_match: re.Match[str]) -> str:
     return (
-        f'<img src="{againcart_logo_url()}" alt="Againcart" '
+        f'<img src="{site_logo_url()}" alt="Excellent Technology BD" '
         f'width="160" height="40" loading="lazy" />'
     )
 
 
 def rewrite_startech_to_againcart(value: str | None) -> str | None:
-    """Replace Star Tech brand text, logos, and link base URLs with Againcart."""
+    """Replace Star Tech brand text, logos, and link base URLs with Excellent Technology BD."""
     if value is None:
         return None
     if not str(value).strip():

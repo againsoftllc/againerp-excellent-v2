@@ -24,7 +24,9 @@ class RequestOtpResponse(BaseModel):
     ok: bool = True
     expires_in: int = 60
     masked: str
-    # the fixed development code — only off the live server when no SMS gateway is set up
+    # Set only when no SMS gateway is configured (Settings → Mail/SMS) — the
+    # code to use for testing. Once a gateway is configured a real code is
+    # texted instead and this comes back null.
     development_otp: Optional[str] = None
 
 
@@ -38,6 +40,25 @@ class VerifyOtpRequest(BaseModel):
 class LoginPinRequest(BaseModel):
     identifier: str = Field(min_length=3, max_length=255)
     pin: str = Field(min_length=4, max_length=4)
+
+
+class GoogleAuthConfigResponse(BaseModel):
+    enabled: bool = False
+    client_id: str = ""
+    mode: Literal["unset", "gis", "redirect"] = "unset"
+    redirect_uri: str = ""
+
+
+class GoogleAuthStartResponse(BaseModel):
+    auth_url: str
+    state: str = ""
+
+
+class GoogleLoginRequest(BaseModel):
+    id_token: Optional[str] = Field(default=None, max_length=8192)
+    access_token: Optional[str] = Field(default=None, max_length=4096)
+    code: Optional[str] = Field(default=None, max_length=2048)
+    redirect_uri: Optional[str] = Field(default=None, max_length=500)
 
 
 class SetPinRequest(BaseModel):
@@ -133,6 +154,10 @@ class RecentOrderRead(BaseModel):
 
 class AccountSummaryRead(BaseModel):
     customer: CustomerMeRead
+    # Every order the customer has placed, counted once. The stored counter on
+    # the customer row has two writers that disagree, so it is not used here.
+    total_orders: int = 0
+    total_spend: Decimal = Decimal("0")
     status_stats: List[OrderStatusStat] = Field(default_factory=list)
     recent_orders: List[RecentOrderRead] = Field(default_factory=list)
     account_manager: Optional[dict[str, Any]] = None
@@ -144,10 +169,20 @@ class AccountSummaryResponse(BaseModel):
 
 class AccountOrderLineRead(BaseModel):
     label: str
+    #: A free extra rather than something the customer paid for.
+    is_gift: bool = False
     qty: int
     unit_price: Decimal
     line_total: Decimal = Decimal("0")
     discount_amount: Decimal = Decimal("0")
+
+
+class AccountOrderGiftRead(BaseModel):
+    """A free extra promised with a combo. It has no order line of its own — it
+    was never charged — so it travels with the combo it came with."""
+
+    name: str
+    image: Optional[str] = None
 
 
 class AccountOrderProductRead(BaseModel):
@@ -155,6 +190,9 @@ class AccountOrderProductRead(BaseModel):
     image_url: Optional[str] = None
     total_qty: int
     lines: List[AccountOrderLineRead] = Field(default_factory=list)
+    #: Set when this entry is a combo rather than a single product.
+    bundle_name: Optional[str] = None
+    gifts: List[AccountOrderGiftRead] = Field(default_factory=list)
 
 
 class AccountOrderRead(BaseModel):
@@ -320,6 +358,7 @@ class AccountCaseRead(BaseModel):
     status: str
     manager_name: Optional[str] = None
     replies: List[AccountCaseReplyRead] = Field(default_factory=list)
+    customer_seen_at: Optional[str] = None
 
 
 class AccountCaseCreate(BaseModel):

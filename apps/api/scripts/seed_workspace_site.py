@@ -1,4 +1,8 @@
-"""Seed the primary Againcart workspace site (id=co1)."""
+"""Seed the primary Excellent Technology BD workspace site (id=co1).
+
+Branding here is the single source of truth the storefront reads through
+``/api/v1/storefront/settings`` — it mirrors ``excellent-web/src/data/seed.ts`` (SEED_SETTINGS).
+"""
 
 from __future__ import annotations
 
@@ -15,7 +19,10 @@ from app.models.workspace_site import DEFAULT_SITE_ID, WorkspaceSite  # noqa: E4
 from app.routers.workspace_sites import _sync_website_settings  # noqa: E402
 
 
-PHONE = "01805049241"
+PHONE = "01913-004278"
+SITE_NAME = "Excellent Technology BD"
+DOMAIN = "excellenttechnology.com.bd"
+LOCAL_STOREFRONT = "http://localhost:3003"
 
 
 def seed_primary_site(db) -> int:
@@ -27,37 +34,38 @@ def seed_primary_site(db) -> int:
         created = 1
 
     row.company_id = "default"
-    row.code = "AGC"
-    row.name = "Againcart"
+    row.code = "EXT"
+    row.name = SITE_NAME
     row.status = "active"
     row.plan = "Growth"
     row.owner = "Againsoft"
-    row.primary_domain = "againerp-frontend.vercel.app"
-    row.domain_aliases = "www.againsoft.com,againsoft.com,localhost:3010"
-    row.storefront_url_local = "http://localhost:3010"
-    row.storefront_url_preview = "https://againerp-frontend.vercel.app"
-    row.storefront_url_production = "https://againerp-frontend.vercel.app"
+    row.primary_domain = DOMAIN
+    row.domain_aliases = "www.excellenttechnology.com.bd,localhost:3003"
+    row.storefront_url_local = LOCAL_STOREFRONT
+    row.storefront_url_preview = f"https://{DOMAIN}"
+    row.storefront_url_production = f"https://{DOMAIN}"
     row.git_repo_url = ""
     row.git_default_branch = "main"
     row.vercel_project_id = ""
     row.vercel_project_name = ""
     row.vercel_team_slug = ""
-    row.tagline = "IT store powered by AgainERP"
+    row.tagline = "Laptop, Desktop & IT Shop in Dhaka"
     row.logo_url = ""
     row.logo_mobile_url = ""
     row.favicon_url = ""
     row.address = (
-        "Samir Tower, House No: 308, Level: 4, S J Jahanara Imam Sharani, "
-        "New Elephant Rd, Dhaka 1205"
+        "Shop# 315 (3rd Floor), BCS Computer City, IDB Bhaban, Agargaon, Dhaka-1207"
     )
     row.contact_phone = PHONE
-    row.contact_email = "info@againsoft.com"
+    row.contact_email = f"info@{DOMAIN}"
     row.whatsapp_number = PHONE
     row.copyright_text = "© 2026 Againcart. All rights reserved."
     row.business_hours = "Saturday – Thursday, 10:00 AM – 8:00 PM"
-    row.meta_title = "Againcart"
-    row.meta_description = "Shop IT products online in Bangladesh."
-    row.meta_keywords = "laptop, computer, gadget, bangladesh, againcart"
+    row.meta_title = f"{SITE_NAME} — Laptop, Desktop & IT Shop in Dhaka"
+    row.meta_description = (
+        f"Shop laptops, desktops, components, and gadgets online at {SITE_NAME}."
+    )
+    row.meta_keywords = "laptop, desktop, computer, monitor, pc builder, dhaka, bangladesh, excellent technology"
     from app.services.site_store_options import dump_site_options
 
     row.options_json = dump_site_options({})

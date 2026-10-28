@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from datetime import date, datetime
 from typing import List, Optional
 
@@ -14,14 +15,16 @@ from app.database import get_db
 from app.models.blog_category import BlogCategory
 from app.models.blog_comment import BlogComment
 from app.models.blog_post import BlogPost
-from app.models.blog_post_product import BlogPostProduct
 from app.models.blog_settings import DEFAULT_BLOG_SETTINGS_ID, BlogSettings
 from app.models.marketing_coupon import MarketingCoupon
+from app.models.newsletter_subscriber import NewsletterSubscriber
 from app.models.website_contact_submission import WebsiteContactSubmission
+from app.schemas.newsletter_subscriber import NewsletterSubscribeRequest, NewsletterSubscribeResponse
 from app.models.website_page import WebsitePage, load_json
 from app.models.website_settings import DEFAULT_WEBSITE_SETTINGS_ID, WebsiteSettings
 from app.services.ecommerce.account_menu_settings import load_account_menu_settings
 from app.services.ecommerce.builder_plugin_settings import load_builder_plugin_settings
+from app.services.ecommerce.live_chat_settings import load_live_chat_enabled
 from app.services.ecommerce.social_links_settings import load_social_links
 from app.services.site_resolver import SITE_HOST_HEADER, resolve_site
 from app.services.site_store_options import load_site_options
@@ -30,6 +33,7 @@ from app.services.ecommerce.checkout_tax_availability import (
     tax_is_included_in_price,
     tax_rate_percent,
 )
+from app.services.footer_links_sync import resolve_footer_links_for_site
 from app.services.storefront_site_options import (
     build_catalog_options,
     build_commerce_options,
@@ -53,6 +57,7 @@ class StorefrontPageRead(BaseModel):
     body_html: str = ""
     meta_title: str = ""
     meta_description: str = ""
+    updated_at: Optional[str] = None
 
 
 class StorefrontPageListItem(BaseModel):
@@ -88,7 +93,7 @@ class StorefrontSettingsRead(BaseModel):
     storefront_url: str = ""
     currency: str = "BDT"
     timezone: str = "Asia/Dhaka"
-    # Phase 4 — Center-synced storefront gates (Monarch / storefront clients)
+    # Phase 4 — Center-synced storefront gates (storefront clients)
     client_slug: Optional[str] = None
     plan: Optional[str] = None
     entitlements_bound: bool = False
@@ -103,8 +108,11 @@ class StorefrontSettingsRead(BaseModel):
     enabled_modules: List[str] = Field(default_factory=list)
     # Which customer-panel menus the storefront should render.
     account_menu: dict = Field(default_factory=dict)
-    # Which storefront builder tools (Smart PC Builder, Again Builder tools) are on.
+    # Which storefront builder tools (PC/CC Builder, calculators) are on —
+    # from the Again Builder plugin in Settings → Plugins.
     builder_plugins: dict = Field(default_factory=dict)
+    # Whether the Live Chat button/widget shows on the storefront at all.
+    live_chat_enabled: bool = True
     # Public social profile URLs; empty means "no profile, hide the icon".
     social: dict = Field(default_factory=dict)
     # Per-site branding / chrome from workspace_sites.options_json.storefront.
@@ -152,9 +160,6 @@ class BlogPostDetail(BlogPostListItem):
     content: Optional[str] = None
     seo_title: Optional[str] = None
     seo_description: Optional[str] = None
-    # catalogue products the post features (Blog → post → Products), in their order
-    product_ids: List[str] = []
-    updated_at: Optional[datetime] = None
 
 
 class BlogPostListResponse(BaseModel):
@@ -226,8 +231,8 @@ def _page_title(page: WebsitePage) -> str:
 def _normalize_storefront_brand_text(value: str) -> str:
     if not value:
         return ""
-    normalized = value.replace("TechPickly", "Againcart")
-    normalized = normalized.replace("Monarch IT", "Againcart")
+    normalized = value.replace("TechPickly", "Excellent Technology BD")
+    normalized = normalized.replace("Againcart", "Excellent Technology BD")
     return normalized
 
 
@@ -240,12 +245,62 @@ def _is_storefront_content_page(page: WebsitePage) -> bool:
     return False
 
 
+PAGE_SLUG_ALIASES: dict[str, list[str]] = {
+    "about-us": ["about"],
+    "about": ["about-us"],
+    "terms-and-conditions": ["terms"],
+    "terms": ["terms-and-conditions"],
+    "refund-and-return": ["refund-return"],
+    "refund-and-return-policy": ["refund-return", "refund-and-return"],
+    "refund-return": ["refund-and-return-policy", "refund-and-return"],
+    "return-policy": ["refund-return", "refund-and-return"],
+    "delivery-policy": ["online-delivery", "shipping-charge", "delivery"],
+    "shipping-charge": ["online-delivery", "delivery-policy", "delivery"],
+    "online-delivery": ["shipping-charge", "delivery-policy", "delivery"],
+    "delivery": ["online-delivery", "shipping-charge"],
+    "payment-terms": ["payment", "payments"],
+    "warranty-policy": ["warranty"],
+    "privacy-policy": ["privacy"],
+    "privacy": ["privacy-policy"],
+    "contact-us": ["contact"],
+    "contact": ["contact-us"],
+}
+
+
+def page_slug_candidates(slug: str) -> list[str]:
+    clean = (slug or "").strip().lower().lstrip("/")
+    candidates = [clean, *PAGE_SLUG_ALIASES.get(clean, [])]
+    seen: set[str] = set()
+    ordered: list[str] = []
+    for item in candidates:
+        if item and item not in seen:
+            seen.add(item)
+            ordered.append(item)
+    return ordered
+
+
+def find_published_website_page(db: Session, slug: str) -> Optional[WebsitePage]:
+    ordered = page_slug_candidates(slug)
+    if not ordered:
+        return None
+    page = (
+        db.query(WebsitePage)
+        .filter(WebsitePage.slug.in_(ordered))
+        .filter(WebsitePage.status == "published")
+        .filter(WebsitePage.visibility == "public")
+        .first()
+    )
+    if page is None or not _is_storefront_content_page(page):
+        return None
+    return page
+
+
 @router.get("/pages", response_model=StorefrontPageListResponse)
 def list_storefront_pages(
     response: Response,
     db: Session = Depends(get_db),
 ) -> StorefrontPageListResponse:
-    """Published public CMS pages for footer / information links (Monarch live-edit)."""
+    """Published public CMS pages for footer / information links (live-edit)."""
     _set_cache(response)
     rows = (
         db.query(WebsitePage)
@@ -279,40 +334,7 @@ def list_storefront_pages(
 @router.get("/pages/{slug}", response_model=StorefrontPageResponse)
 def get_storefront_page(slug: str, response: Response, db: Session = Depends(get_db)) -> StorefrontPageResponse:
     _set_cache(response)
-    # Alias legacy storefront / static information slugs → admin Website Pages slugs
-    alias_map = {
-        "about-us": ["about"],
-        "about": ["about-us"],
-        "terms-and-conditions": ["terms"],
-        "terms": ["terms-and-conditions"],
-        "refund-and-return": ["refund-return"],
-        "refund-and-return-policy": ["refund-return", "refund-and-return"],
-        "refund-return": ["refund-and-return-policy", "refund-and-return"],
-        "return-policy": ["refund-return", "refund-and-return"],
-        "delivery-policy": ["shipping-charge", "delivery"],
-        "shipping-charge": ["delivery-policy", "delivery"],
-        "payment-terms": ["payment", "payments"],
-        "warranty-policy": ["warranty"],
-        "privacy-policy": ["privacy"],
-        "privacy": ["privacy-policy"],
-        "contact-us": ["contact"],
-        "contact": ["contact-us"],
-    }
-    candidates = [slug, *alias_map.get(slug, [])]
-    # de-dupe preserve order
-    seen: set[str] = set()
-    ordered: list[str] = []
-    for c in candidates:
-        if c and c not in seen:
-            seen.add(c)
-            ordered.append(c)
-    page = (
-        db.query(WebsitePage)
-        .filter(WebsitePage.slug.in_(ordered))
-        .filter(WebsitePage.status == "published")
-        .filter(WebsitePage.visibility == "public")
-        .first()
-    )
+    page = find_published_website_page(db, slug)
     if not page:
         raise HTTPException(status_code=404, detail="Page not found")
     seo = load_json(page.seo_json, {})
@@ -333,6 +355,7 @@ def get_storefront_page(slug: str, response: Response, db: Session = Depends(get
             body_html=body_html,
             meta_title=meta_title,
             meta_description=meta_description,
+            updated_at=page.updated_at.isoformat() if page.updated_at else None,
         )
     )
 
@@ -393,6 +416,16 @@ def get_storefront_settings(
 
     site_options = load_site_options(site.options_json if site else None)
     storefront_options = build_storefront_options(site_options)
+    if site and not storefront_options.get("footer", {}).get("links"):
+        resolved_links = resolve_footer_links_for_site(site, db)
+        if resolved_links:
+            storefront_options = {
+                **storefront_options,
+                "footer": {
+                    **storefront_options.get("footer", {}),
+                    "links": resolved_links,
+                },
+            }
     catalog_options = build_catalog_options(site_options)
     commerce_options = {
         **build_commerce_options(site_options),
@@ -433,6 +466,7 @@ def get_storefront_settings(
             enabled_modules=list(entitlements.get("enabled_modules") or []),
             account_menu=load_account_menu_settings(db),
             builder_plugins=load_builder_plugin_settings(db),
+            live_chat_enabled=load_live_chat_enabled(db),
             social=social,
             site_code=(site.code if site and site.code else ""),
             site_is_primary=bool(site.is_primary) if site else True,
@@ -441,6 +475,18 @@ def get_storefront_settings(
             commerce=commerce_options,
         )
     )
+
+
+@router.get("/builder-tools/{tool_slug}")
+def get_builder_tool_config_public(tool_slug: str, db: Session = Depends(get_db)) -> dict:
+    """A builder tool's effective slot/label/category config — an admin's
+    saved override if there is one, otherwise the tool's built-in default.
+    Public: the storefront's PC/CC Builder pages read this with no login."""
+    from app.services.ecommerce.builder_tool_config import DEFAULTS_BY_TOOL, load_tool_config
+
+    if tool_slug not in DEFAULTS_BY_TOOL:
+        raise HTTPException(status_code=404, detail="Unknown builder tool")
+    return {"data": load_tool_config(db, tool_slug)}
 
 
 @router.post("/contact", response_model=ContactCreateResponse)
@@ -463,6 +509,46 @@ def submit_contact(
     db.add(row)
     db.commit()
     return ContactCreateResponse(data={"id": row.id, "status": "received"})
+
+
+_EMAIL_RE = re.compile(r"^[^\s@]+@[^\s@]+\.[^\s@]{2,}$")
+_BD_PHONE_RE = re.compile(r"^(?:\+?880|0)1[3-9]\d{8}$")
+
+
+@router.post("/newsletter/subscribe", response_model=NewsletterSubscribeResponse)
+def subscribe_newsletter(
+    payload: NewsletterSubscribeRequest,
+    response: Response,
+    db: Session = Depends(get_db),
+) -> NewsletterSubscribeResponse:
+    """Footer "Subscribe" opt-in — the visitor gives an email or a BD mobile
+    number, whichever they have to hand. Re-submitting the same contact just
+    re-activates it rather than creating a duplicate row."""
+    _set_cache(response, PRIVATE_CACHE)
+    contact = payload.contact.strip()
+    digits = contact.replace(" ", "").replace("-", "")
+    is_email = bool(_EMAIL_RE.match(contact))
+    is_phone = bool(_BD_PHONE_RE.match(digits))
+    if not is_email and not is_phone:
+        raise HTTPException(status_code=400, detail="Enter a valid email or mobile number")
+
+    email = contact if is_email else ""
+    phone = digits if is_phone else ""
+    existing = (
+        db.query(NewsletterSubscriber)
+        .filter(NewsletterSubscriber.email == email if is_email else NewsletterSubscriber.phone == phone)
+        .first()
+    )
+    if existing:
+        if not existing.is_active:
+            existing.is_active = True
+            db.commit()
+        return NewsletterSubscribeResponse(data={"status": "subscribed"})
+
+    row = NewsletterSubscriber(email=email, phone=phone, source="footer")
+    db.add(row)
+    db.commit()
+    return NewsletterSubscribeResponse(data={"status": "subscribed"})
 
 
 @router.get("/blog/posts", response_model=BlogPostListResponse)
@@ -554,14 +640,6 @@ def get_blog_post(slug: str, response: Response, db: Session = Depends(get_db)) 
             content=row.content,
             seo_title=row.seo_title,
             seo_description=row.seo_description,
-            product_ids=[
-                pid
-                for (pid,) in db.query(BlogPostProduct.product_id)
-                .filter(BlogPostProduct.post_id == row.id)
-                .order_by(BlogPostProduct.sort_order)
-                .all()
-            ],
-            updated_at=row.updated_at,
         )
     )
 

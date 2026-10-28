@@ -211,6 +211,7 @@ from app.routers import (
     storefront_redirects,
     storefront_resolve,
     storefront_wishlist,
+    storefront_pc_builds,
     storefront_configurator,
     storefront_bundles,
     storefront_sitemap,
@@ -219,6 +220,14 @@ from app.routers import (
     storefront_ai_search,
     storefront_offer_pages,
     storefront_happy_hour,
+    storefront_deals,
+    storefront_hot_products,
+    storefront_downloads,
+    storefront_coupons,
+    catalog_stock_statuses,
+    product_page_banners,
+    website_deals,
+    website_hot_products,
     storefront_chat,
     website_builder_documents,
     website_homepage,
@@ -324,6 +333,16 @@ def _bootstrap() -> None:
         from app.models.ready_build import ReadyBuild  # noqa: F401
         from app.models.smart_pc_builder_plugin import SmartPcBuilderPlugin  # noqa: F401
         from app.models.sms_gateway_plugin import SmsGatewayPlugin  # noqa: F401 — SMS gateway plugin table
+        from app.models.builder_tool_config import BuilderToolConfig  # noqa: F401
+        from app.models.website_deals_page import WebsiteDealsPage  # noqa: F401
+        from app.models.website_hot_products import WebsiteHotProducts  # noqa: F401
+        from app.models.catalog_stock_status import CatalogStockStatus  # noqa: F401
+        from app.models.catalog_product_special import CatalogProductSpecial  # noqa: F401
+        from app.models.catalog_product_related import CatalogProductRelated  # noqa: F401
+        from app.models.product_page_banner import ProductPageBanner  # noqa: F401
+        from app.models.newsletter_subscriber import NewsletterSubscriber  # noqa: F401
+        from app.models.commerce_order_digital_download import CommerceOrderDigitalDownload  # noqa: F401
+        from app.models.storefront_pc_build import StorefrontPcBuild  # noqa: F401
 
         Base.metadata.create_all(bind=engine)
         from scripts.ensure_tenant_seed_data import ensure_tenant_seed_data
@@ -483,6 +502,14 @@ def _bootstrap() -> None:
         except Exception:
             db.rollback()
             logger.exception("Bootstrap: ensure PC Builder slot catalog binds failed")
+        from scripts.ensure_excellent_extras import (
+            ensure_catalog_product_special_columns,
+            ensure_catalog_stock_status_columns,
+        )
+
+        ensure_catalog_product_special_columns()
+        ensure_catalog_stock_status_columns()
+
         ensure_workspace_site_company_id_column()
         # Additive ADD COLUMN IF NOT EXISTS migrations that only ran on a fresh
         # database (init_db.main) — the live DB kept missing columns the models
@@ -569,41 +596,44 @@ def _bootstrap() -> None:
             except Exception:
                 db.rollback()
                 logger.exception("Bootstrap: seed_storefront_content_pages failed")
-            try:
-                # HRM was never seeded, so databases created before the HRM seed
-                # existed still render every HRM screen empty. The seed matches
-                # on natural keys, so running it on each boot only fills gaps.
-                from scripts.seed_hrm import seed_hrm
+            # Demo HRM / RMA / serial rows re-fill on every boot, so a client
+            # install that deleted them got them back. Opt in with SEED_DEMO_DATA.
+            if settings.seed_demo_data:
+                try:
+                    # HRM was never seeded, so databases created before the HRM seed
+                    # existed still render every HRM screen empty. The seed matches
+                    # on natural keys, so running it on each boot only fills gaps.
+                    from scripts.seed_hrm import seed_hrm
 
-                hrm_created = seed_hrm(db)
-                added = sum(hrm_created.values())
-                if added:
-                    logger.info("Bootstrap: HRM seed added %s row(s)", added)
-            except Exception:
-                db.rollback()
-                logger.exception("Bootstrap: seed_hrm failed")
-            try:
-                from scripts.seed_rma import seed_rma
+                    hrm_created = seed_hrm(db)
+                    added = sum(hrm_created.values())
+                    if added:
+                        logger.info("Bootstrap: HRM seed added %s row(s)", added)
+                except Exception:
+                    db.rollback()
+                    logger.exception("Bootstrap: seed_hrm failed")
+                try:
+                    from scripts.seed_rma import seed_rma
 
-                rma_created = seed_rma(db)
-                if rma_created.get("tickets"):
-                    logger.info("Bootstrap: RMA seed added %s claim(s)", rma_created["tickets"])
-            except Exception:
-                db.rollback()
-                logger.exception("Bootstrap: seed_rma failed")
-            try:
-                # The serial registry backfills from whatever RMA tickets exist,
-                # so it must run after seed_rma above on the same boot.
-                from scripts.seed_serials import seed_serials
+                    rma_created = seed_rma(db)
+                    if rma_created.get("tickets"):
+                        logger.info("Bootstrap: RMA seed added %s claim(s)", rma_created["tickets"])
+                except Exception:
+                    db.rollback()
+                    logger.exception("Bootstrap: seed_rma failed")
+                try:
+                    # The serial registry backfills from whatever RMA tickets exist,
+                    # so it must run after seed_rma above on the same boot.
+                    from scripts.seed_serials import seed_serials
 
-                serial_created = seed_serials(db)
-                if serial_created.get("total"):
-                    logger.info(
-                        "Bootstrap: serial registry seeded %s unit(s)", serial_created["total"]
-                    )
-            except Exception:
-                db.rollback()
-                logger.exception("Bootstrap: seed_serials failed")
+                    serial_created = seed_serials(db)
+                    if serial_created.get("total"):
+                        logger.info(
+                            "Bootstrap: serial registry seeded %s unit(s)", serial_created["total"]
+                        )
+                except Exception:
+                    db.rollback()
+                    logger.exception("Bootstrap: seed_serials failed")
             try:
                 # Vendor types are seeded on natural key (code), so running
                 # this on every boot only fills gaps — same as the HRM seed.
@@ -1024,6 +1054,16 @@ app.include_router(storefront_resolve.router, prefix="/api/v1/storefront")
 app.include_router(storefront_redirects.router, prefix="/api/v1/storefront")
 app.include_router(storefront_cart.router, prefix="/api/v1/storefront")
 app.include_router(storefront_wishlist.router, prefix="/api/v1/storefront")
+app.include_router(storefront_wishlist.saved_router, prefix="/api/v1/storefront")
+app.include_router(storefront_pc_builds.router, prefix="/api/v1/storefront")
+app.include_router(storefront_deals.router, prefix="/api/v1/storefront")
+app.include_router(storefront_hot_products.router, prefix="/api/v1/storefront")
+app.include_router(storefront_downloads.router, prefix="/api/v1/storefront")
+app.include_router(storefront_coupons.router, prefix="/api/v1/storefront")
+app.include_router(catalog_stock_statuses.router, prefix="/api/v1/catalog", dependencies=require_admin)
+app.include_router(product_page_banners.router, prefix="/api/v1", dependencies=require_admin)
+app.include_router(website_deals.router, prefix="/api/v1/website", dependencies=require_admin)
+app.include_router(website_hot_products.router, prefix="/api/v1/website", dependencies=require_admin)
 app.include_router(storefront_configurator.router, prefix="/api/v1/storefront")
 app.include_router(storefront_bundles.router, prefix="/api/v1/storefront")
 app.include_router(storefront_sitemap.router, prefix="/api/v1/storefront")

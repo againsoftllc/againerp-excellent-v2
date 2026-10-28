@@ -40,10 +40,6 @@ def _default_flags(*, bound: bool = False) -> dict[str, Any]:
             "emi": True,
             "china_import": True,
         },
-        # Unbound (no Center configured) or fetch-failed — default permissive, same as every
-        # other flag above, rather than locking out AI because Center happened to be unreachable.
-        "ai_enabled": True,
-        "ai_access_status": None,
     }
 
 
@@ -147,10 +143,6 @@ def resolve_storefront_feature_flags(*, force_refresh: bool = False) -> dict[str
         "center_feature_flags": payload.get("feature_flags")
         if isinstance(payload.get("feature_flags"), dict)
         else {},
-        # Surfaced alongside the storefront flags above rather than a second HTTP round-trip
-        # to the same /client/entitlements payload — see app/services/ai/entitlements.py.
-        "ai_enabled": payload.get("ai_enabled"),
-        "ai_access_status": payload.get("ai_access_status"),
     }
     with _lock:
         _cache["payload"] = result

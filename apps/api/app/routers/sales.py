@@ -1038,7 +1038,11 @@ def bulk_delete_orders(
     svc = SalesService(db, company_id=company_id)
     deleted = svc.bulk_delete_orders(payload.ids, actor_id=user.id)
     db.commit()
-    return SalesApiEnvelope(success=True, message=f"{deleted} order(s) deleted", data={"deleted": deleted})
+    return SalesApiEnvelope(
+        success=True,
+        message=f"{deleted} order(s) deleted",
+        data={"deleted": deleted, "skipped": skipped},
+    )
 
 
 @router.post("/orders/bulk-status", response_model=SalesApiEnvelope)

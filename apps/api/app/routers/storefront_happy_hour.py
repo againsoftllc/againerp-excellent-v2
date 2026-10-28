@@ -11,6 +11,7 @@ from pydantic import BaseModel
 from sqlalchemy.orm import Session, joinedload
 
 from app.database import get_db
+from app.models.catalog_product_special import in_daily_window
 from app.models.marketing_happy_hour import MarketingHappyHour, MarketingHappyHourSection
 from app.services.ecommerce.storefront_catalog_service import StorefrontCatalogService
 
@@ -96,42 +97,79 @@ class StorefrontHappyHourResponse(BaseModel):
 def _detail(db: Session, row: MarketingHappyHour) -> StorefrontHappyHourDetail:
     catalog = StorefrontCatalogService(db)
     sections: List[StorefrontHappyHourSection] = []
-    for section in sorted(row.sections or [], key=lambda s: (s.sort_order, s.label)):
-        products: List[StorefrontHappyHourDealProduct] = []
-        for deal in sorted(section.deals or [], key=lambda d: (d.sort_order, d.product_slug)):
-            slug = (deal.product_slug or "").strip()
-            if not slug:
+    # Outside tonight's window the page still shows (title, countdown, terms)
+    # so shoppers know when it opens, but no product/price is listed yet —
+    # matches the price-side nightly gating already applied on the PDP.
+    live_now = in_daily_window(datetime.utcnow(), row.daily_start_hour, row.daily_end_hour)
+    if live_now:
+        from app.models.catalog_product import CatalogProduct
+
+        all_slugs = {
+            (deal.product_slug or "").strip()
+            for section in row.sections or []
+            for deal in section.deals or []
+            if (deal.product_slug or "").strip()
+        }
+        raw_by_slug = {
+            p.slug: p
+            for p in (
+                db.query(CatalogProduct).filter(CatalogProduct.slug.in_(all_slugs)).all()
+                if all_slugs
+                else []
+            )
+        }
+        for section in sorted(row.sections or [], key=lambda s: (s.sort_order, s.label)):
+            products: List[StorefrontHappyHourDealProduct] = []
+            for deal in sorted(
+                section.deals or [], key=lambda d: (d.priority or 0, d.sort_order, d.product_slug)
+            ):
+                slug = (deal.product_slug or "").strip()
+                if not slug:
+                    continue
+                # Disabled = its quota sold out (or the admin turned it off) —
+                # stop showing it on the campaign page, same as removing it.
+                if not deal.enabled:
+                    continue
+                view = catalog.get_by_slug(slug)
+                if not view:
+                    continue
+                # The "regular" reference must be the product's raw list price,
+                # never the already-resolved `view.price` — otherwise once this
+                # very deal is the active special, offer == view.price and the
+                # product wrongly looks like a non-discount and gets dropped.
+                raw = raw_by_slug.get(slug)
+                if raw is not None:
+                    regular = float(raw.compare_at_price) if raw.compare_at_price else float(raw.price)
+                else:
+                    regular = (
+                        float(view.compare_at_price) if view.compare_at_price is not None else float(view.price)
+                    )
+                offer = float(deal.offer_price)
+                if offer <= 0 or offer >= regular:
+                    continue
+                products.append(
+                    StorefrontHappyHourDealProduct(
+                        id=view.id,
+                        item_id=view.item_id,
+                        slug=view.slug,
+                        name=view.name,
+                        price=offer,
+                        compare_at_price=regular,
+                        thumbnail=view.thumbnail,
+                        brand=view.brand or None,
+                        in_stock=bool(view.in_stock),
+                        note=(deal.note or None),
+                    )
+                )
+            if not products:
                 continue
-            view = catalog.get_by_slug(slug)
-            if not view:
-                continue
-            regular = float(view.compare_at_price) if view.compare_at_price is not None else float(view.price)
-            offer = float(deal.offer_price)
-            if offer <= 0 or offer >= regular:
-                continue
-            products.append(
-                StorefrontHappyHourDealProduct(
-                    id=view.id,
-                    item_id=view.item_id,
-                    slug=view.slug,
-                    name=view.name,
-                    price=offer,
-                    compare_at_price=regular,
-                    thumbnail=view.thumbnail,
-                    brand=view.brand or None,
-                    in_stock=bool(view.in_stock),
-                    note=(deal.note or None),
+            sections.append(
+                StorefrontHappyHourSection(
+                    key=section.key,
+                    label=section.label,
+                    products=products,
                 )
             )
-        if not products:
-            continue
-        sections.append(
-            StorefrontHappyHourSection(
-                key=section.key,
-                label=section.label,
-                products=products,
-            )
-        )
     return StorefrontHappyHourDetail(
         slug=row.slug,
         title=row.title,

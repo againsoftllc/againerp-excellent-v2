@@ -206,7 +206,7 @@ def ensure_homepage_category_pins(db: Session, row: WebsiteHomepage | None = Non
         "/images/catalog/view/theme/default/image/svg/gift-black-icon.svg": "/uploads/media/sidemenu-gift-black-icon.svg",
         "/images/catalog/view/theme/default/image/svg/fire-black-icon.svg": "/uploads/media/sidemenu-fire-black-icon.svg",
         "/images/catalog/view/theme/default/image/svg/pc-icon.svg": "/uploads/media/sidemenu-pc-icon.svg",
-        "/images/catalog/view/theme/default/image/monarch-it-icon.png": "/uploads/media/sidemenu-monarch-it-icon.png",
+        "/images/catalog/view/theme/default/image/monarch-it-icon.png": "",
     }
     side_menu = raw.get("side_menu") if isinstance(raw.get("side_menu"), dict) else None
     if isinstance(side_menu, dict):

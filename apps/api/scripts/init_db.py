@@ -681,7 +681,7 @@ def seed_blog_articles_from_catalog(db) -> int:
         names = ", ".join(p.name for p in group_products[:3])
         excerpt = lead.short_description or lead.description or f"Explore {category_name}: {names}."
         content = lead.description or (
-            f"<p>Our team selected the best {category_name.lower()} from the AgainERP catalog.</p>"
+            f"<p>Our team selected the best {category_name.lower()} from the Excellent Technology BD catalog.</p>"
             f"<p>Featured products: {names}.</p>"
         )
         cover = lead.thumbnail
@@ -694,9 +694,9 @@ def seed_blog_articles_from_catalog(db) -> int:
             status="published" if inserted < 2 else "draft",
             category_id=blog_cat.id if blog_cat else None,
             category_name=blog_cat.name if blog_cat else category_name,
-            author_name="AgainERP Team",
+            author_name="Excellent Technology BD Team",
             cover_image_url=cover,
-            seo_title=f"{title} | AgainERP Blog",
+            seo_title=f"{title} | Excellent Technology BD Blog",
             seo_description=(excerpt or title)[:300],
             published_at=now if inserted < 2 else None,
         )
@@ -813,7 +813,7 @@ def seed_blog_comments_from_catalog(db) -> int:
             "author_email": "nusrat@example.com",
             "body": "Great roundup — which option is best for everyday office use?",
             "status": "approved",
-            "moderated_by": "AgainERP Team",
+            "moderated_by": "Excellent Technology BD Team",
         },
     ]
 
@@ -857,7 +857,7 @@ def seed_website_settings(db) -> int:
     db.add(
         WebsiteSettings(
             id=DEFAULT_WEBSITE_SETTINGS_ID,
-            site_name="AgainERP",
+            site_name="Excellent Technology BD",
             tagline="Modern ERP for Bangladeshi businesses",
             logo_url="",
             logo_mobile_url="",
@@ -866,7 +866,7 @@ def seed_website_settings(db) -> int:
             contact_phone="",
             contact_email="",
             whatsapp_number="",
-            copyright_text="© 2026 AgainERP. All rights reserved.",
+            copyright_text="© 2026 Excellent Technology BD. All rights reserved.",
         )
     )
     db.commit()
@@ -874,7 +874,7 @@ def seed_website_settings(db) -> int:
 
 
 def seed_website_homepage(db) -> int:
-    """Ensure singleton storefront homepage content is Monarch-branded (upsert defaults)."""
+    """Ensure singleton storefront homepage content exists (upsert defaults)."""
     from app.services.website_homepage_service import (
         default_homepage_content,
         ensure_homepage_category_pins,
@@ -1447,7 +1447,6 @@ def seed_media(db) -> int:
 # Side-menu rail icons — copied into uploads/media so Media Library can pick them.
 SIDE_MENU_ICON_FILES: list[tuple[str, str, str]] = [
     # (media_id, source_filename, stored_filename)
-    ("media_sidemenu_logo", "monarch-it-icon.png", "sidemenu-monarch-it-icon.png"),
     ("media_sidemenu_phone", "phone-black-icon.svg", "sidemenu-phone-black-icon.svg"),
     ("media_sidemenu_message", "message-icon.svg", "sidemenu-message-icon.svg"),
     ("media_sidemenu_compare", "compare-icon-svg.svg", "sidemenu-compare-icon.svg"),
@@ -1522,7 +1521,6 @@ def seed_side_menu_media(db) -> int:
 
 
 HEADER_MEDIA_FILES: list[tuple[str, str, str]] = [
-    ("media_header_logo", "monarch-it-logo.png", "header-monarch-it-logo.png"),
     ("media_header_order_track", "order-track-icon.svg", "header-order-track-icon.svg"),
 ]
 
@@ -1590,7 +1588,6 @@ def seed_header_media(db) -> int:
 
 
 FOOTER_MEDIA_FILES: list[tuple[str, str, str]] = [
-    ("media_footer_logo", "monarch-it.png", "footer-monarch-it.png"),
     ("media_footer_membership", "partnership-logo.png", "footer-partnership-logo.png"),
     ("media_footer_payment", "payment-partner.png", "footer-payment-partner.png"),
 ]
@@ -3816,13 +3813,18 @@ def seed_storefront_content_pages(db) -> int:
         "delete_disabled": True,
     }
     home_seo = {
-        "meta_title": "Againcart — Leading Computer, Laptop & Gadget Shop",
-        "meta_description": "Shop computers, laptops, gaming PCs, and gadgets at Againcart.",
-        "keywords": "againcart, laptop, computer, bangladesh",
-        "og_title": "Againcart",
-        "og_description": "Shop computers, laptops, gaming PCs, and gadgets.",
+        "meta_title": "Excellent Technology BD — Laptop, Desktop & IT Shop in Dhaka",
+        "meta_description": (
+            "Genuine laptops, desktops, PC components and accessories with official warranty. "
+            "Shop online or visit our branches at IDB Bhaban, Multiplan and Mirpur 10."
+        ),
+        "keywords": "excellent technology bd, laptop, desktop, pc components, dhaka, bangladesh",
+        "og_title": "Excellent Technology BD",
+        "og_description": (
+            "Genuine laptops, desktops, PC components and accessories with official warranty."
+        ),
         "og_image": None,
-        "canonical_url": "/",
+        "canonical_url": "https://excellenttechnology.com.bd/",
         "indexable": True,
         "schema_type": "WebPage",
     }
@@ -3985,17 +3987,22 @@ def seed_storefront_content_pages(db) -> int:
     settings = db.get(WebsiteSettings, DEFAULT_WEBSITE_SETTINGS_ID)
     if settings:
         if not (settings.contact_phone or "").strip():
-            settings.contact_phone = "+86 188 2376 9373"
+            settings.contact_phone = "01913-004278"
             upserted += 1
         if not (settings.whatsapp_number or "").strip():
-            settings.whatsapp_number = "+86 188 2376 9373"
+            settings.whatsapp_number = "+8801913004278"
             upserted += 1
         if not (settings.address or "").strip():
-            settings.address = "32/B, Malibagh Chowdhury Para, Dhaka - 1219"
+            settings.address = (
+                "Shop# 315 (3rd Floor), BCS Computer City, IDB Bhaban, Agargaon, Dhaka-1207"
+            )
             upserted += 1
         email = (settings.contact_email or "").strip()
-        if not email or email.endswith("@dropshop.local") or "monarch" in email.lower():
-            settings.contact_email = "info@techpickly.com"
+        # Only fill a blank or a leftover placeholder. This used to also match
+        # any address containing a brand name, which meant a client who set their
+        # real address had it replaced on the next boot.
+        if not email or email.endswith("@dropshop.local"):
+            settings.contact_email = "info@excellenttechnology.com.bd"
             upserted += 1
 
     drafts = (
@@ -5810,7 +5817,7 @@ def seed_website_pages(db) -> int:
             "created_at": "2026-01-01",
             "updated_at": "2026-07-01",
             "seo": seo(
-                meta_title=f"{name} | AgainERP",
+                meta_title=f"{name} | Excellent Technology BD",
                 meta_description=f"{name} system page",
                 indexable=False,
             ),
@@ -5856,13 +5863,13 @@ def seed_website_pages(db) -> int:
             "created_at": "2026-01-01",
             "updated_at": "2026-07-09",
             "seo": seo(
-                meta_title="AgainERP — Premium Commerce",
-                meta_description="Shop electronics, fashion, and lifestyle products.",
-                keywords="ecommerce, againerp, shop, bangladesh",
-                og_title="AgainERP — Premium Commerce",
+                meta_title="Excellent Technology BD — Laptop, Desktop & IT Shop in Dhaka",
+                meta_description="Genuine laptops, desktops, PC components and accessories with official warranty.",
+                keywords="excellent technology bd, laptop, desktop, pc components, dhaka",
+                og_title="Excellent Technology BD — Laptop, Desktop & IT Shop in Dhaka",
                 og_description="Discover curated products with fast delivery.",
                 og_image="/media/og-home.jpg",
-                canonical_url="https://againerp.com/",
+                canonical_url="https://excellenttechnology.com.bd/",
             ),
             "advanced": advanced(css_class="page-home", body_class="theme-commerce"),
             "access": access("Admin", ["Admin", "Rahim", "Sadia"]),
@@ -5912,8 +5919,8 @@ def seed_website_pages(db) -> int:
             "created_at": "2026-02-10",
             "updated_at": "2026-06-18",
             "seo": seo(
-                meta_title="About Us | AgainERP",
-                meta_description="Learn about AgainERP and our team.",
+                meta_title="About Us | Excellent Technology BD",
+                meta_description="Learn about Excellent Technology BD and our team.",
                 schema_type="AboutPage",
             ),
             "advanced": advanced(),
@@ -5956,8 +5963,8 @@ def seed_website_pages(db) -> int:
             "created_at": "2026-02-10",
             "updated_at": "2026-06-15",
             "seo": seo(
-                meta_title="Contact | AgainERP",
-                meta_description="Get in touch with AgainERP support.",
+                meta_title="Contact | Excellent Technology BD",
+                meta_description="Get in touch with Excellent Technology BD.",
                 schema_type="ContactPage",
             ),
             "advanced": advanced(),
@@ -6043,7 +6050,7 @@ def seed_website_pages(db) -> int:
             "created_at": "2026-01-15",
             "updated_at": "2026-06-20",
             "seo": seo(
-                meta_title="Shop All Products | AgainERP",
+                meta_title="Shop All Products | Excellent Technology BD",
                 meta_description="Browse our full catalog.",
                 schema_type="CollectionPage",
             ),
@@ -6087,7 +6094,7 @@ def seed_website_pages(db) -> int:
             "created_at": "2026-03-01",
             "updated_at": "2026-07-12",
             "seo": seo(
-                meta_title="Category | AgainERP",
+                meta_title="Category | Excellent Technology BD",
                 meta_description="Browse products by category.",
                 schema_type="CollectionPage",
             ),
@@ -6154,7 +6161,7 @@ def seed_website_pages(db) -> int:
 
 
 def ensure_website_category_page(db) -> int:
-    """Upsert Category template page so Live Edit preview matches Monarch /{slug}."""
+    """Upsert Category template page so Live Edit preview matches storefront /{slug}."""
     page_id = "pg-category"
     row = db.get(WebsitePage, page_id)
     legacy = db.get(WebsitePage, "pg-cat-electronics")
@@ -6190,10 +6197,10 @@ def ensure_website_category_page(db) -> int:
                 current_version=1,
                 seo_json=website_dump_json(
                     {
-                        "meta_title": "Category | AgainERP",
+                        "meta_title": "Category | Excellent Technology BD",
                         "meta_description": "Browse products by category.",
                         "keywords": "",
-                        "og_title": "Category | AgainERP",
+                        "og_title": "Category | Excellent Technology BD",
                         "og_description": "Browse products by category.",
                         "og_image": None,
                         "canonical_url": None,
@@ -6425,7 +6432,7 @@ def seed_website_builder_documents(db) -> int:
             "sec-footer",
             "rich_text",
             "Footer",
-            {"body": "© 2026 AgainERP · Privacy · Terms · Support"},
+            {"body": "© 2026 Excellent Technology BD · Privacy · Terms · Support"},
         ),
     ]
 
@@ -6455,6 +6462,13 @@ def seed_website_builder_documents(db) -> int:
     )
     db.commit()
     return 1
+
+
+def seed_demo_data_enabled() -> bool:
+    """Demo transactional rows are opt-in (SEED_DEMO_DATA=true); client installs start clean."""
+    from app.config import get_settings
+
+    return bool(get_settings().seed_demo_data)
 
 
 def main() -> None:
@@ -6511,6 +6525,7 @@ def main() -> None:
     print("  Tables ready.")
 
     db = SessionLocal()
+    seed_demo = seed_demo_data_enabled()
     try:
         before_products = db.query(CatalogProduct).count()
         inserted_products = seed_products(db)
@@ -6535,9 +6550,9 @@ def main() -> None:
 
             inserted_site = seed_primary_site(db)
             if inserted_site:
-                print("  Workspace site: primary Againcart site (co1) created.")
+                print("  Workspace site: primary site (co1) created.")
             else:
-                print("  Workspace site: primary Againcart site (co1) upserted.")
+                print("  Workspace site: primary site (co1) upserted.")
         except Exception as exc:  # noqa: BLE001
             print(f"  Workspace site seed skipped: {exc}")
 
@@ -6582,14 +6597,14 @@ def main() -> None:
         )
 
         before_reviews = db.query(CatalogProductReview).count()
-        inserted_reviews = seed_reviews(db)
+        inserted_reviews = seed_reviews(db) if seed_demo else 0
         after_reviews = db.query(CatalogProductReview).count()
         print(
             f"  Product reviews: {after_reviews} ({inserted_reviews} new, {before_reviews} before seed).",
         )
 
         before_qa = db.query(CatalogProductQa).count()
-        inserted_qa = seed_product_qa(db)
+        inserted_qa = seed_product_qa(db) if seed_demo else 0
         after_qa = db.query(CatalogProductQa).count()
         print(
             f"  Product Q&A: {after_qa} ({inserted_qa} upserted, {before_qa} before seed).",
@@ -6746,7 +6761,7 @@ def main() -> None:
         )
 
         before_scraps = db.query(InventoryStockScrap).count()
-        inserted_scraps = seed_stock_scraps(db)
+        inserted_scraps = seed_stock_scraps(db) if seed_demo else 0
         after_scraps = db.query(InventoryStockScrap).count()
         print(
             f"  Stock scraps: {after_scraps} ({inserted_scraps} new, {before_scraps} before seed).",
@@ -6791,26 +6806,30 @@ def main() -> None:
             print(f"  Opening stock movements: {opening_moves} seeded.")
 
         before_customers = db.query(CommerceCustomer).count()
-        inserted_customers = seed_customers(db)
+        inserted_customers = seed_customers(db) if seed_demo else 0
         after_customers = db.query(CommerceCustomer).count()
         print(
             f"  Customers: {after_customers} ({inserted_customers} new, {before_customers} before seed).",
         )
 
         before_orders = db.query(CommerceOrder).count()
-        inserted_orders = seed_orders(db)
+        inserted_orders = seed_orders(db) if seed_demo else 0
         linked_orders = link_seed_orders_to_customers(db)
         after_orders = db.query(CommerceOrder).count()
         print(
             f"  Orders: {after_orders} ({inserted_orders} new, {linked_orders} customer-linked, {before_orders} before seed).",
         )
-        account_demo = seed_account_demo_data(db)
+        account_demo = (
+            seed_account_demo_data(db)
+            if seed_demo
+            else {"payments": 0, "cases": 0, "customers_enriched": 0}
+        )
         print(
             f"  Account demo: payments={account_demo['payments']}, cases={account_demo['cases']}, customers_enriched={account_demo['customers_enriched']}.",
         )
 
         before_suppliers = db.query(CommerceSupplier).count()
-        inserted_suppliers = seed_suppliers(db)
+        inserted_suppliers = seed_suppliers(db) if seed_demo else 0
         after_suppliers = db.query(CommerceSupplier).count()
         print(
             f"  Suppliers: {after_suppliers} ({inserted_suppliers} new, {before_suppliers} before seed).",
@@ -6821,7 +6840,7 @@ def main() -> None:
 
         before_parties = db.query(Party).count()
         backfilled_parties = backfill_parties_from_commerce(db)
-        seeded_demo_parties = seed_demo_parties(db)
+        seeded_demo_parties = seed_demo_parties(db) if seed_demo else 0
         after_parties = db.query(Party).count()
         print(
             f"  Parties (SSOT): {after_parties} ({backfilled_parties} backfilled, {seeded_demo_parties} demo, {before_parties} before).",
@@ -6837,7 +6856,7 @@ def main() -> None:
             )
 
         before_pos = db.query(PurchaseOrder).count()
-        inserted_pos = seed_purchase_orders(db)
+        inserted_pos = seed_purchase_orders(db) if seed_demo else 0
         after_pos = db.query(PurchaseOrder).count()
         print(
             f"  Purchase orders: {after_pos} ({inserted_pos} new, {before_pos} before seed).",
@@ -6851,7 +6870,7 @@ def main() -> None:
 
         before_sp = db.query(SupplierProduct).count()
         try:
-            inserted_sp = seed_supplier_catalog(db)
+            inserted_sp = seed_supplier_catalog(db) if seed_demo else 0
             after_sp = db.query(SupplierProduct).count()
             print(
                 f"  Supplier catalog: {after_sp} products ({inserted_sp} new, {before_sp} before seed).",
@@ -6860,7 +6879,7 @@ def main() -> None:
             print(f"  Supplier catalog: skipped ({exc}).")
 
         before_so = db.query(SalesOrder).count()
-        inserted_so = seed_sales(db)
+        inserted_so = seed_sales(db) if seed_demo else 0
         after_so = db.query(SalesOrder).count()
         print(
             f"  Sales orders: {after_so} ({inserted_so} new, {before_so} before seed).",
@@ -6881,28 +6900,28 @@ def main() -> None:
         )
 
         before_returns = db.query(CommerceOrderReturn).count()
-        inserted_returns = seed_returns(db)
+        inserted_returns = seed_returns(db) if seed_demo else 0
         after_returns = db.query(CommerceOrderReturn).count()
         print(
             f"  Order returns: {after_returns} ({inserted_returns} new, {before_returns} before seed).",
         )
 
         before_refunds = db.query(CommerceOrderRefund).count()
-        inserted_refunds = seed_refunds(db)
+        inserted_refunds = seed_refunds(db) if seed_demo else 0
         after_refunds = db.query(CommerceOrderRefund).count()
         print(
             f"  Order refunds: {after_refunds} ({inserted_refunds} new, {before_refunds} before seed).",
         )
 
         before_approvals = db.query(AiApproval).count()
-        inserted_approvals = seed_ai_approvals(db)
+        inserted_approvals = seed_ai_approvals(db) if seed_demo else 0
         after_approvals = db.query(AiApproval).count()
         print(
             f"  AI approvals: {after_approvals} ({inserted_approvals} new, {before_approvals} before seed).",
         )
 
         before_audit_logs = db.query(AiAuditLog).count()
-        inserted_audit_logs = seed_ai_audit_logs(db)
+        inserted_audit_logs = seed_ai_audit_logs(db) if seed_demo else 0
         after_audit_logs = db.query(AiAuditLog).count()
         print(
             f"  AI audit logs: {after_audit_logs} ({inserted_audit_logs} new, {before_audit_logs} before seed).",
@@ -6939,28 +6958,28 @@ def main() -> None:
         )
 
         before_journeys = db.query(MarketingJourney).count()
-        inserted_journeys = seed_journeys(db)
+        inserted_journeys = seed_journeys(db) if seed_demo else 0
         after_journeys = db.query(MarketingJourney).count()
         print(
             f"  Journeys: {after_journeys} ({inserted_journeys} new, {before_journeys} before seed).",
         )
 
         before_audiences = db.query(MarketingAudience).count()
-        inserted_audiences = seed_audiences(db)
+        inserted_audiences = seed_audiences(db) if seed_demo else 0
         after_audiences = db.query(MarketingAudience).count()
         print(
             f"  Audiences: {after_audiences} ({inserted_audiences} new, {before_audiences} before seed).",
         )
 
         before_campaigns = db.query(MarketingCampaign).count()
-        inserted_campaigns = seed_campaigns(db)
+        inserted_campaigns = seed_campaigns(db) if seed_demo else 0
         after_campaigns = db.query(MarketingCampaign).count()
         print(
             f"  Campaigns: {after_campaigns} ({inserted_campaigns} new, {before_campaigns} before seed).",
         )
 
         before_coupons = db.query(MarketingCoupon).count()
-        inserted_coupons = seed_coupons(db)
+        inserted_coupons = seed_coupons(db) if seed_demo else 0
         after_coupons = db.query(MarketingCoupon).count()
         print(f"  Coupons: {after_coupons} ({inserted_coupons} new, {before_coupons} before seed).")
 
@@ -6993,12 +7012,12 @@ def main() -> None:
             print(f"  SEO URLs: skipped ({exc}).")
 
         before_staging = db.query(ProviderImportJob).count()
-        inserted_staging = seed_provider_import_staging(db)
+        inserted_staging = seed_provider_import_staging(db) if seed_demo else 0
         after_staging = db.query(ProviderImportJob).count()
         print(f"  Provider import staging: {after_staging} jobs ({inserted_staging} new, {before_staging} before seed).")
 
         before_mappings = db.query(ProviderEntityMapping).count()
-        inserted_mappings = seed_provider_entity_mappings(db)
+        inserted_mappings = seed_provider_entity_mappings(db) if seed_demo else 0
         after_mappings = db.query(ProviderEntityMapping).count()
         print(f"  Provider entity mappings: {after_mappings} ({inserted_mappings} new, {before_mappings} before seed).")
 
@@ -7036,7 +7055,7 @@ def main() -> None:
         try:
             from scripts.seed_hrm import seed_hrm
 
-            hrm_created = seed_hrm(db)
+            hrm_created = seed_hrm(db) if seed_demo else {}
             print(f"  HRM: {sum(hrm_created.values())} new row(s) across {len(hrm_created)} entities.")
         except Exception as exc:  # noqa: BLE001 — seeding must not block startup
             db.rollback()
@@ -7045,7 +7064,7 @@ def main() -> None:
         try:
             from scripts.seed_rma import seed_rma
 
-            rma_created = seed_rma(db)
+            rma_created = seed_rma(db) if seed_demo else {}
             print(f"  RMA: {rma_created.get('tickets', 0)} claim(s) seeded.")
         except Exception as exc:  # noqa: BLE001 — seeding must not block startup
             db.rollback()
@@ -7054,7 +7073,7 @@ def main() -> None:
         try:
             from scripts.seed_serials import seed_serials
 
-            serial_created = seed_serials(db)
+            serial_created = seed_serials(db) if seed_demo else {}
             print(f"  Serial registry: {serial_created.get('total', 0)} serial(s) seeded.")
         except Exception as exc:  # noqa: BLE001 — seeding must not block startup
             db.rollback()

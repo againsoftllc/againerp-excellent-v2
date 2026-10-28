@@ -54,6 +54,9 @@ class Settings(BaseSettings):
     storefront_public_url: str = "http://localhost:3010"
     # Public base of this API for gateway callbacks; empty = derive from request
     public_api_base_url: str = ""
+    # Demo rows (HRM, RMA, serials, customers, orders, CRM/AI logs, coupons, …).
+    # Off for client deployments; set SEED_DEMO_DATA=true only on demo installs.
+    seed_demo_data: bool = False
     seo_audit_live_crawl: bool = True
     seo_audit_crawl_max_pages: int = 30
     seo_audit_crawl_timeout: float = 8.0

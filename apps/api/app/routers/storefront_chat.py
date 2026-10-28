@@ -25,6 +25,8 @@ class ChatMessageRead(BaseModel):
     type: str
     text: str
     product_id: Optional[str] = None
+    product_snapshot: Optional[dict] = None
+    bundle_snapshot: Optional[dict] = None
     file_name: Optional[str] = None
     file_url: Optional[str] = None
     file_mime: Optional[str] = None
@@ -32,6 +34,8 @@ class ChatMessageRead(BaseModel):
     file_kind: Optional[str] = None
     time: str
     read: bool
+    reaction: Optional[str] = None
+    reply_to: Optional[dict] = None
 
 
 class ChatConversationRead(BaseModel):
@@ -41,6 +45,7 @@ class ChatConversationRead(BaseModel):
     customer_email: str
     starred: bool
     status: str = "open"
+    unread_count: int = 0
     messages: List[ChatMessageRead]
     updated_at: str
 
@@ -53,15 +58,22 @@ class ChatMessageCreate(BaseModel):
     text: str = Field(default="", max_length=8000)
     type: str = Field(default="text", max_length=16)
     product_id: Optional[str] = Field(default=None, max_length=36)
+    product_snapshot: Optional[dict] = None
+    bundle_snapshot: Optional[dict] = None
     file_name: Optional[str] = Field(default=None, max_length=255)
     file_url: Optional[str] = None
     file_mime: Optional[str] = Field(default=None, max_length=120)
     file_size: Optional[int] = None
     file_kind: Optional[str] = Field(default=None, max_length=32)
+    reply_to_id: Optional[str] = Field(default=None, max_length=36)
 
 
 class ChatReadRequest(BaseModel):
     reader: str = Field(default="customer", max_length=16)
+
+
+class ChatReactionUpdate(BaseModel):
+    emoji: Optional[str] = Field(default=None, max_length=16)
 
 
 def _svc(db: Session) -> WebsiteChatService:
@@ -93,6 +105,11 @@ def post_chat_message(
     response.headers["Cache-Control"] = STOREFRONT_CACHE
     try:
         convo = _svc(db).get_or_create_for_customer(_customer(ctx))
+        extra: dict = {}
+        if payload.product_snapshot:
+            extra["product"] = payload.product_snapshot
+        if payload.bundle_snapshot:
+            extra["bundle"] = payload.bundle_snapshot
         _svc(db).add_customer_message(
             convo,
             text=payload.text,
@@ -103,10 +120,30 @@ def post_chat_message(
             file_mime=payload.file_mime,
             file_size=payload.file_size,
             file_kind=payload.file_kind,
+            payload=extra,
+            reply_to_id=payload.reply_to_id,
         )
-        db.refresh(convo)
+        convo = _svc(db).get(convo.id)
     except ChatError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return ChatConversationResponse(data=ChatConversationRead(**_svc(db).to_dict(convo)))
+
+
+@router.put("/messages/{message_id}/reaction", response_model=ChatConversationResponse)
+def set_chat_message_reaction(
+    message_id: str,
+    payload: ChatReactionUpdate,
+    response: Response,
+    db: Session = Depends(get_db),
+    ctx: CustomerAuthContext = Depends(get_current_storefront_customer),
+) -> ChatConversationResponse:
+    response.headers["Cache-Control"] = STOREFRONT_CACHE
+    convo = _svc(db).get_or_create_for_customer(_customer(ctx))
+    try:
+        _svc(db).set_reaction(convo, message_id, payload.emoji)
+        convo = _svc(db).get(convo.id)
+    except ChatError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
     return ChatConversationResponse(data=ChatConversationRead(**_svc(db).to_dict(convo)))
 
 

@@ -1,4 +1,4 @@
-"""Againcart live-edit homepage CMS (opaque JSON) on the primary workspace site."""
+"""Storefront live-edit homepage CMS (opaque JSON) on the primary workspace site."""
 
 from __future__ import annotations
 
@@ -13,6 +13,7 @@ from sqlalchemy.orm import Session
 from app.database import get_db
 from app.models.workspace_site import WorkspaceSite
 from app.routers.workspace_sites import _sync_website_settings
+from app.services.footer_links_sync import cms_footer_to_options_links, sync_footer_links_bundle
 from app.services.site_resolver import SITE_HOST_HEADER, resolve_site
 from app.services.site_store_options import dump_site_options, load_site_options
 from app.services.storefront_site_options import (
@@ -74,11 +75,11 @@ def _sync_brand_from_cms(site: WorkspaceSite, content: dict[str, Any]) -> None:
         site.logo_mobile_url = desktop[:500]
 
     footer = content.get("footer") if isinstance(content.get("footer"), dict) else {}
-    address = str(footer.get("address") or "").strip()
+    address = str(footer.get("officeAddress") or footer.get("address") or "").strip()
     email = str(footer.get("email") or "").strip()
     phone = str(footer.get("supportPhone") or "").strip()
     whatsapp = str(footer.get("whatsappValue") or "").strip()
-    hours = str(footer.get("supportHoursLabel") or "").strip()
+    hours = str(footer.get("supportHoursLabel") or footer.get("businessHours") or "").strip()
     if address:
         site.address = address
     if email:
@@ -89,6 +90,11 @@ def _sync_brand_from_cms(site: WorkspaceSite, content: dict[str, Any]) -> None:
         site.whatsapp_number = whatsapp[:50]
     if hours:
         site.business_hours = hours[:255]
+    brand = str(footer.get("copyrightBrand") or "").strip()
+    if brand:
+        before = str(footer.get("copyrightBefore") or "")
+        after = str(footer.get("copyrightAfter") or "")
+        site.copyright_text = f"{before}{brand}{after}".strip()[:255]
 
 
 def _sync_storefront_options_from_cms(site: WorkspaceSite, content: dict[str, Any]) -> None:
@@ -155,6 +161,18 @@ def _sync_storefront_options_from_cms(site: WorkspaceSite, content: dict[str, An
     if notice_text:
         storefront["meta"]["notice_text"] = notice_text
 
+    links = cms_footer_to_options_links(footer)
+    if links:
+        storefront["footer"]["links"] = links
+        info_title = str(
+            footer.get("linksTitle")
+            or footer.get("informationTitle")
+            or footer.get("information_title")
+            or ""
+        ).strip()
+        if info_title:
+            storefront["footer"]["information_title"] = info_title
+
     options[STOREFRONT_OPTIONS_KEY] = storefront
     site.options_json = dump_site_options(options)
 
@@ -199,6 +217,21 @@ def put_storefront_cms(
     site.storefront_cms_json = json.dumps(content, ensure_ascii=False)
     _sync_brand_from_cms(site, content)
     _sync_storefront_options_from_cms(site, content)
+    footer = content.get("footer") if isinstance(content.get("footer"), dict) else {}
+    links = cms_footer_to_options_links(footer)
+    if links:
+        info_title = str(
+            footer.get("linksTitle")
+            or footer.get("informationTitle")
+            or footer.get("information_title")
+            or ""
+        ).strip()
+        sync_footer_links_bundle(
+            db,
+            site,
+            links,
+            information_title=info_title or None,
+        )
     _sync_website_settings(db, site)
     db.commit()
     db.refresh(site)

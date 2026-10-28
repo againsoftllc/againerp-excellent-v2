@@ -71,7 +71,9 @@ def _api_base(request: Request) -> str:
 def _result_redirect(order_number: str, status: str, message: str = "") -> RedirectResponse:
     settings = get_settings()
     base = settings.storefront_public_url.strip().rstrip("/")
-    url = f"{base}/payment/bkash/result?order={quote(order_number)}&status={quote(status)}"
+    url = f"{base}/account/payments?pay={quote(status)}"
+    if order_number:
+        url += f"&order={quote(order_number)}"
     if message:
         url += f"&message={quote(message[:200])}"
     return RedirectResponse(url=url)
@@ -191,6 +193,10 @@ def _mark_order_paid(db: Session, order: CommerceOrder, *, trx_id: str, amount: 
         receivable.status = "paid" if receivable.balance <= 0 else "partial"
 
     db.commit()
+
+    from app.services.ecommerce.digital_delivery_service import fulfill_paid_order_digital_downloads
+
+    fulfill_paid_order_digital_downloads(db, order)
 
 
 @router.get("/callback")

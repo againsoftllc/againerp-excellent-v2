@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import secrets
 import uuid
 from dataclasses import dataclass
 from datetime import date, datetime
@@ -18,7 +19,7 @@ from app.models.commerce_order_item import CommerceOrderItem
 from app.models.finance import FinancePayment, FinanceReceivable
 from app.models.inventory_warehouse import InventoryWarehouse
 from app.models.storefront_cart import StorefrontCart, StorefrontCartItem
-from app.security import new_session_token
+from app.models.commerce_order_item import CommerceOrderItem
 from app.services.ecommerce.checkout_constants import (
     DEFAULT_COMPANY_ID,
     PAYMENT_LABELS,
@@ -27,14 +28,15 @@ from app.services.ecommerce.checkout_tax_availability import (
     resolve_tax_amount,
     shipping_is_taxable,
 )
-from app.services.marketing.coupon_service import CouponError, resolve_coupon_discount
-from app.services.ecommerce.checkout_payment_plugin import PreparedPayment, get_payment_plugin
-from app.services.ecommerce.commerce_inventory_service import (
-    CommerceInventoryError,
-    CommerceInventoryService,
+from app.services.marketing.coupon_service import (
+    CouponError,
+    record_coupon_redemption,
+    resolve_coupon_discount,
 )
+from app.services.ecommerce.checkout_payment_plugin import PreparedPayment, get_payment_plugin
 from app.services.ecommerce.checkout_payment_availability import (
     is_payment_method_allowed,
+    payment_label_overrides,
     payment_options_as_dicts,
 )
 from app.services.ecommerce.checkout_shipping_availability import (
@@ -44,14 +46,6 @@ from app.services.ecommerce.checkout_shipping_availability import (
 )
 from app.services.ecommerce.storefront_cart_service import CartError, StorefrontCartService
 from app.models.platform_setting import PlatformSetting
-
-
-def _local_mobile(raw: str) -> str:
-    """'+880 1712-345678' / '8801712345678' → '01712345678'; '' when it isn't a Bangladeshi mobile number."""
-    digits = "".join(ch for ch in (raw or "") if ch.isdigit())
-    if digits.startswith("880"):
-        digits = digits[2:]
-    return digits if len(digits) == 11 and digits.startswith("01") else ""
 
 
 def _loyalty_enabled(db: Session) -> bool:
@@ -66,8 +60,43 @@ def _loyalty_enabled(db: Session) -> bool:
     return str(row.value).strip().lower() in {"1", "true", "yes", "on"}
 
 
+def _checkout_notice_enabled(db: Session) -> bool:
+    """Off by default — the notice bar only shows once an admin turns it on."""
+    row = (
+        db.query(PlatformSetting)
+        .filter(PlatformSetting.key == "checkout.notice_enabled")
+        .first()
+    )
+    if row is None or row.value is None or str(row.value).strip() == "":
+        return False
+    return str(row.value).strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _checkout_notice_text(db: Session) -> str:
+    row = (
+        db.query(PlatformSetting)
+        .filter(PlatformSetting.key == "checkout.notice_text")
+        .first()
+    )
+    if row is None or row.value is None:
+        return ""
+    return str(row.value)
+
+
 class CheckoutError(ValueError):
     """Checkout validation or placement failure."""
+
+
+def compose_person_name(first_name: str, last_name: str) -> str:
+    """Join billing names without doubling a single full-name field."""
+    first = " ".join((first_name or "").split()).strip()
+    last = " ".join((last_name or "").split()).strip()
+    dummy = last.lower() in {"", ".", "-", "_"}
+    if dummy or last.lower() == first.lower():
+        return first
+    if first.lower().endswith(f" {last.lower()}"):
+        return first
+    return f"{first} {last}".strip()
 
 
 @dataclass(frozen=True)
@@ -92,6 +121,7 @@ class CheckoutPlaceRequest:
     coupon_code: Optional[str] = None
     notes: Optional[str] = None
     customer_id: Optional[str] = None
+    pickup_point: Optional[str] = None
 
 
 @dataclass(frozen=True)
@@ -116,7 +146,6 @@ class StorefrontCheckoutService:
     def __init__(self, db: Session, *, allow_out_of_stock: bool = False) -> None:
         self._db = db
         self._cart_svc = StorefrontCartService(db, allow_out_of_stock=allow_out_of_stock)
-        self._inventory = CommerceInventoryService(db)
 
     def get_options(self) -> dict[str, Any]:
         shipping = shipping_options_payload(self._db)
@@ -124,6 +153,8 @@ class StorefrontCheckoutService:
             **shipping,
             "payment_methods": payment_options_as_dicts(self._db),
             "reward_points_enabled": _loyalty_enabled(self._db),
+            "checkout_notice_enabled": _checkout_notice_enabled(self._db),
+            "checkout_notice_text": _checkout_notice_text(self._db),
             "emi_banks": [
                 {"id": "city", "name": "City Bank", "months": [3, 6, 9, 12]},
                 {"id": "brac", "name": "BRAC Bank", "months": [3, 6, 12]},
@@ -143,22 +174,35 @@ class StorefrontCheckoutService:
     ) -> CheckoutTotals:
         subtotal = sum((line.unit_price * line.quantity for line in cart.items), Decimal("0"))
         code = (coupon_code or cart.coupon_code or "").strip() or None
-        discount = Decimal("0")
+        # A Ready Build's whole-build discount was set on the cart as a lump
+        # sum when its parts were added (see add_ready_build_to_cart) — a
+        # real coupon can still stack on top of it, same as two independent
+        # discounts on the same subtotal.
+        discount = cart.ready_build_discount or Decimal("0")
         applied_code: Optional[str] = None
         if code:
             try:
-                resolved = resolve_coupon_discount(self._db, code, subtotal)
+                from app.services.marketing.coupon_service import CouponCartLine
+
+                lines = [
+                    CouponCartLine(slug=line.slug, unit_price=line.unit_price, quantity=line.quantity)
+                    for line in cart.items
+                ]
+                resolved = resolve_coupon_discount(self._db, code, subtotal, lines)
             except CouponError:
                 resolved = None
             if resolved:
-                discount = resolved.amount
+                discount += resolved.amount
                 applied_code = resolved.code
+
+        discount = min(discount, subtotal)
+
         taxable = max(subtotal - discount, Decimal("0"))
-        shipping = resolve_shipping_amount(
-            self._db,
-            shipping_method,
-            subtotal,
-            district=district,
+        # Nothing to ship — a digital-only order never carries a delivery charge.
+        shipping = (
+            Decimal("0")
+            if self._cart_svc.is_digital_only_cart(cart)
+            else resolve_shipping_amount(self._db, shipping_method, subtotal, district=district)
         )
         # Shipping is taxed only when the admin says so.
         if shipping_is_taxable(self._db):
@@ -188,8 +232,14 @@ class StorefrontCheckoutService:
         blocking = [i for i in cart_issues if i.blocking]
         errors.extend(i.message for i in blocking)
 
-        errors.extend(self._validate_address(request.billing, prefix="Billing"))
-        errors.extend(self._validate_address(request.shipping, prefix="Shipping"))
+        digital_only = bool(cart.items) and self._cart_svc.is_digital_only_cart(cart)
+        errors.extend(self._validate_address(request.billing, prefix="Billing", require_address=not digital_only))
+        errors.extend(self._validate_address(request.shipping, prefix="Shipping", require_address=not digital_only))
+
+        if digital_only and request.payment_method.strip().lower() == "cod":
+            errors.append(
+                "Digital products require online payment — Cash on Delivery isn't available for this order."
+            )
 
         if request.customer_id:
             customer = self._db.get(CommerceCustomer, request.customer_id)
@@ -233,8 +283,16 @@ class StorefrontCheckoutService:
         now = datetime.utcnow()
         order_number = self._order_number()
 
-        customer_name = f"{request.billing.first_name.strip()} {request.billing.last_name.strip()}".strip()
-        payment_label = PAYMENT_LABELS.get(request.payment_method, request.payment_method)
+        customer_name = compose_person_name(request.billing.first_name, request.billing.last_name)
+        # Record the button the shopper actually pressed. A shop that renames
+        # "Card / SSLCommerz" to "Bank Transfer" would otherwise file the order
+        # under the gateway's own name, and staff taking the customer's call
+        # would find no "Bank Transfer" anywhere. The gateway is still
+        # recoverable from the pay:<id> tag below.
+        payment_label = (
+            payment_label_overrides(self._db).get(request.payment_method)
+            or PAYMENT_LABELS.get(request.payment_method, request.payment_method)
+        )
 
         timeline = [
             {
@@ -291,7 +349,12 @@ class StorefrontCheckoutService:
             tax_amount=totals.tax,
             shipping_amount=totals.shipping,
             grand_total=totals.grand_total,
-            notes=self._compose_notes(request.notes, request.shipping_method, request.coupon_code),
+            notes=self._compose_notes(
+                request.notes,
+                request.shipping_method,
+                request.coupon_code,
+                request.pickup_point,
+            ),
             timeline_json=dump_json(timeline),
             activities_json=dump_json(activities),
             tags_json=dump_json(
@@ -350,6 +413,7 @@ class StorefrontCheckoutService:
                 name=line.name_snapshot,
                 image_url=line.thumbnail,
                 variant_label=line.variant_label,
+                attributes_json=getattr(line, "attributes_json", None),
                 quantity=line.quantity,
                 unit_price=line.unit_price,
                 tax_amount=line.tax_amount,
@@ -406,6 +470,9 @@ class StorefrontCheckoutService:
             },
         )
 
+        if totals.coupon_code:
+            record_coupon_redemption(self._db, totals.coupon_code)
+
         self._cart_svc.clear_cart(cart)
         self._db.commit()
 
@@ -416,19 +483,29 @@ class StorefrontCheckoutService:
             payment_record_id=payment_row.id if payment_row else None,
         )
 
-    def _validate_address(self, address: CheckoutAddress, *, prefix: str) -> List[str]:
+    def _validate_address(
+        self,
+        address: CheckoutAddress,
+        *,
+        prefix: str,
+        require_address: bool = True,
+    ) -> List[str]:
         errors: List[str] = []
         if not address.first_name.strip():
             errors.append(f"{prefix} first name is required")
-        # email and last name are optional (a mobile number is enough); an email given must look like one
-        if address.email.strip() and "@" not in address.email:
+        if not address.last_name.strip():
+            errors.append(f"{prefix} last name is required")
+        if not address.email.strip() or "@" not in address.email:
             errors.append(f"{prefix} email is invalid")
         if not address.phone.strip():
             errors.append(f"{prefix} phone is required")
-        if not address.line1.strip():
-            errors.append(f"{prefix} address is required")
-        if not address.city.strip():
-            errors.append(f"{prefix} city is required")
+        # A digital-only order has nothing to deliver, so street address / city
+        # are never asked for and never required.
+        if require_address:
+            if not address.line1.strip():
+                errors.append(f"{prefix} address is required")
+            if not address.city.strip():
+                errors.append(f"{prefix} city is required")
         return errors
 
     def _resolve_customer(
@@ -442,7 +519,7 @@ class StorefrontCheckoutService:
         if storefront_customer is not None:
             if storefront_customer.status != "active":
                 raise CheckoutError("Customer account is not available")
-            name = f"{request.billing.first_name} {request.billing.last_name}".strip()
+            name = compose_person_name(request.billing.first_name, request.billing.last_name)
             if name:
                 storefront_customer.name = name
             if request.billing.phone.strip():
@@ -465,21 +542,12 @@ class StorefrontCheckoutService:
             if row and row.status == "active":
                 return row
 
-        # a guest is the customer with the same email, else the same mobile number — so the order shows in the
-        # account they sign in to with that number
         email = request.billing.email.strip().lower()
         existing = (
-            self._db.query(CommerceCustomer).filter(CommerceCustomer.email == email).first() if email else None
+            self._db.query(CommerceCustomer)
+            .filter(CommerceCustomer.email == email)
+            .first()
         )
-        if existing is None:
-            phone = _local_mobile(request.billing.phone)
-            if phone:
-                existing = (
-                    self._db.query(CommerceCustomer)
-                    .filter(CommerceCustomer.phone.in_([phone, "88" + phone, "+88" + phone]))
-                    .order_by(CommerceCustomer.created_at.asc())
-                    .first()
-                )
         if existing:
             return existing
 
@@ -492,11 +560,11 @@ class StorefrontCheckoutService:
             if by_party:
                 return by_party
 
-        name = f"{request.billing.first_name} {request.billing.last_name}".strip()
-        code = f"CUST-{new_session_token()[:8].upper()}"
+        name = compose_person_name(request.billing.first_name, request.billing.last_name)
+        code = "CUST-" + "".join(secrets.choice("ABCDEFGHJKLMNPQRSTUVWXYZ23456789") for _ in range(8))
         row = CommerceCustomer(
-            id=str(uuid.uuid4()),
             company_id=DEFAULT_COMPANY_ID,
+            party_id=user.party_id if user else None,
             customer_code=code,
             name=name,
             phone=request.billing.phone.strip(),
@@ -507,15 +575,6 @@ class StorefrontCheckoutService:
             customer_since=date.today(),
             status="active",
         )
-        # party_id is NOT NULL — reuse the logged-in user's Party if there is
-        # one, otherwise link/create a fresh Party for this guest checkout,
-        # before the first insert (same fix as the admin create-customer path).
-        if user and user.party_id:
-            row.party_id = user.party_id
-        else:
-            from app.services.parties.commerce_party_bridge import ensure_party_for_customer
-
-            ensure_party_for_customer(self._db, row)
         self._db.add(row)
         self._db.flush()
         return row
@@ -592,25 +651,15 @@ class StorefrontCheckoutService:
         if not snapshot.in_stock:
             raise CheckoutError(f"Stock unavailable for {line.name_snapshot}")
 
+        if snapshot.product_id:
+            self._consume_special_quota(snapshot.product_id, int(line.quantity))
+
         # Storefront uses catalog Manage Stock / Stock Status only — no warehouse.
         if not snapshot.track_quantity:
             return
 
         if line.quantity > snapshot.available_qty:
             raise CheckoutError(f"Stock unavailable for {line.name_snapshot}")
-
-        try:
-            self._inventory.reserve(
-                line.item_id,
-                line.quantity,
-                warehouse_id=warehouse_id,
-                reference=reference,
-                source_type="storefront_cart",
-                source_id=order_id,
-                notes=f"Checkout reserve — {line.name_snapshot}",
-            )
-        except CommerceInventoryError as exc:
-            raise CheckoutError(str(exc)) from exc
 
         from app.models.catalog_product import CatalogProduct
 
@@ -638,6 +687,46 @@ class StorefrontCheckoutService:
                 if variant:
                     variant.stock = max(0, int(variant.stock or 0) - int(line.quantity))
 
+    def _consume_special_quota(self, product_id: str, quantity: int) -> None:
+        """The deal that was actually live for this product at checkout gets
+        its quota debited — a limited-quantity special stops resolving as
+        active once sold out, even mid-date-window (see resolve_active_special)."""
+        from app.models.catalog_product_special import (
+            CatalogProductSpecial,
+            resolve_active_special,
+        )
+
+        specials = (
+            self._db.query(CatalogProductSpecial)
+            .filter(CatalogProductSpecial.product_id == product_id)
+            .all()
+        )
+        active = resolve_active_special(specials)
+        if active is None or active.quantity is None:
+            return
+        active.quantity_sold = int(active.quantity_sold or 0) + quantity
+        if active.quantity_sold < active.quantity:
+            return
+
+        # Sold out — if this special is a Happy Hour / Offer campaign mirror,
+        # disable the source deal too, so the admin's product list reflects it
+        # (the row stays in the section; it just stops applying its price).
+        if not (active.happy_hour_campaign_id or active.offer_campaign_id):
+            return
+        from app.models.catalog_product import CatalogProduct
+
+        product = self._db.get(CatalogProduct, product_id)
+        if not product:
+            return
+        if active.happy_hour_campaign_id:
+            from app.routers.marketing_happy_hours import disable_happy_hour_deal_by_slug
+
+            disable_happy_hour_deal_by_slug(self._db, active.happy_hour_campaign_id, product.slug)
+        if active.offer_campaign_id:
+            from app.routers.marketing_offers import disable_offer_deal_by_slug
+
+            disable_offer_deal_by_slug(self._db, active.offer_campaign_id, product.slug)
+
     def _prepare_invoice(
         self,
         customer: CommerceCustomer,
@@ -653,14 +742,6 @@ class StorefrontCheckoutService:
             .first()
         )
         if existing:
-            from app.services.finance.finance_service import FinanceService
-
-            FinanceService(self._db).try_post(
-                lambda: FinanceService(self._db).record_commerce_order(order.id),
-                source_type="commerce_order",
-                source_id=order.id,
-                company_id=order.company_id,
-            )
             return existing
 
         receivable = FinanceReceivable(
@@ -675,20 +756,9 @@ class StorefrontCheckoutService:
             tax_amount=order.tax_amount,
             due_date=date.today(),
             status="open",
-            posting_status="pending",
         )
         self._db.add(receivable)
         self._db.flush()
-
-        from app.services.finance.finance_service import FinanceService
-
-        FinanceService(self._db).try_post(
-            lambda: FinanceService(self._db).record_commerce_order(order.id),
-            source_type="commerce_order",
-            source_id=order.id,
-            company_id=order.company_id,
-        )
-        self._db.refresh(receivable)
         return receivable
 
     def _prepare_payment_record(
@@ -697,7 +767,7 @@ class StorefrontCheckoutService:
         customer: CommerceCustomer,
         prepared: PreparedPayment,
     ) -> FinancePayment:
-        payment_number = f"PAY-{new_session_token()[:8].upper()}"
+        payment_number = "PAY-" + "".join(secrets.choice("ABCDEFGHJKLMNPQRSTUVWXYZ23456789") for _ in range(8))
         row = FinancePayment(
             company_id=order.company_id,
             payment_number=payment_number,
@@ -738,18 +808,23 @@ class StorefrontCheckoutService:
         return row.id
 
     def _order_number(self) -> str:
-        return f"ORD-{new_session_token()[:8].upper()}"
+        return "ORD-" + "".join(secrets.choice("ABCDEFGHJKLMNPQRSTUVWXYZ23456789") for _ in range(8))  # letters/digits only (no - or _), no look-alike 0/O/1/I
 
     @staticmethod
     def _compose_notes(
         notes: Optional[str],
         shipping_method: str,
         coupon_code: Optional[str],
+        pickup_point: Optional[str] = None,
     ) -> Optional[str]:
         parts = []
         if notes and notes.strip():
             parts.append(notes.strip())
         parts.append(f"Shipping: {shipping_method}")
+        # A pickup order is paid like any other, so the counter is the only thing
+        # telling staff where to hand the goods over.
+        if shipping_method == "pickup" and (pickup_point or "").strip():
+            parts.append(f"Pickup point: {pickup_point.strip()}")
         if coupon_code:
             parts.append(f"Coupon: {coupon_code}")
         return " · ".join(parts) if parts else None

@@ -1,4 +1,4 @@
-"""Public storefront category PLP template (Monarch catalog view)."""
+"""Public storefront category PLP template (catalog view)."""
 
 from __future__ import annotations
 

@@ -17,6 +17,12 @@ from app.schemas.marketing_coupon import (
     CouponUpdate,
 )
 
+from datetime import date as _date
+
+# Open-ended coupons (no start/end) use these sentinel bounds; the Excellent storefront coupon router relies on them.
+OPEN_START = _date(2000, 1, 1)
+OPEN_END = _date(2099, 12, 31)
+
 router = APIRouter(prefix="/marketing/coupons", tags=["marketing-coupons"])
 
 

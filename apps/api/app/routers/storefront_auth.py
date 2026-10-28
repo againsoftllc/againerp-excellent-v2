@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Optional
 
-from fastapi import APIRouter, Depends, Header, HTTPException, Request
+from fastapi import APIRouter, Depends, Header, HTTPException, Query
 from sqlalchemy.orm import Session
 
 from app.database import get_db
@@ -11,6 +11,9 @@ from app.schemas.storefront_account import (
     AuthMethodResponse,
     AuthSessionResponse,
     CustomerMeRead,
+    GoogleAuthConfigResponse,
+    GoogleAuthStartResponse,
+    GoogleLoginRequest,
     IdentifierRequest,
     LoginPinRequest,
     MeResponse,
@@ -20,10 +23,20 @@ from app.schemas.storefront_account import (
     VerifyOtpRequest,
 )
 from app.services.ecommerce.storefront_customer_auth_service import (
-    DEFAULT_OTP,
     CustomerAuthError,
     StorefrontCustomerAuthService,
     mask_identifier,
+)
+from app.services.ecommerce.storefront_google_oauth import (
+    build_google_auth_url,
+    default_redirect_uri,
+    encode_oauth_state,
+    exchange_google_code,
+    google_client_id,
+    google_is_configured,
+    google_mode,
+    verify_google_access_token,
+    verify_google_id_token,
 )
 
 router = APIRouter(prefix="/auth", tags=["storefront-auth"])
@@ -55,18 +68,15 @@ def auth_method(payload: IdentifierRequest, db: Session = Depends(get_db)) -> Au
 
 
 @router.post("/request-otp", response_model=RequestOtpResponse)
-def request_otp(payload: IdentifierRequest, http_request: Request, db: Session = Depends(get_db)) -> RequestOtpResponse:
-    """Send a sign-in code by SMS (the site's gateway); development_otp only off the live server without SMS."""
-    from app.services.site_resolver import request_site_options
-
+def request_otp(payload: IdentifierRequest, db: Session = Depends(get_db)) -> RequestOtpResponse:
     try:
-        normalized, expires_in, dev = _svc(db).request_otp(payload.identifier, request_site_options(db, http_request))
+        normalized, expires_in, dev_otp = _svc(db).request_otp(payload.identifier)
     except CustomerAuthError as exc:
         raise _http(exc) from exc
     return RequestOtpResponse(
         expires_in=expires_in,
         masked=mask_identifier(normalized),
-        development_otp=DEFAULT_OTP if dev else None,
+        development_otp=dev_otp,
     )
 
 
@@ -91,6 +101,56 @@ def verify_otp(payload: VerifyOtpRequest, db: Session = Depends(get_db)) -> Auth
 def login_pin(payload: LoginPinRequest, db: Session = Depends(get_db)) -> AuthSessionResponse:
     try:
         token, expires_at, customer, identity = _svc(db).login_pin(payload.identifier, payload.pin)
+    except CustomerAuthError as exc:
+        raise _http(exc) from exc
+    return AuthSessionResponse(
+        token=token,
+        expires_at=expires_at,
+        customer=CustomerMeRead(**StorefrontCustomerAuthService.customer_to_me(customer, identity)),
+    )
+
+
+@router.get("/google/config", response_model=GoogleAuthConfigResponse)
+def google_config() -> GoogleAuthConfigResponse:
+    return GoogleAuthConfigResponse(
+        enabled=google_is_configured(),
+        client_id=google_client_id(),
+        mode=google_mode(),  # type: ignore[arg-type]
+        redirect_uri=default_redirect_uri(),
+    )
+
+
+@router.get("/google/start", response_model=GoogleAuthStartResponse)
+def google_start(
+    next_path: str = Query("/account", alias="next"),
+    redirect_uri: Optional[str] = None,
+) -> GoogleAuthStartResponse:
+    uri = (redirect_uri or "").strip() or default_redirect_uri()
+    try:
+        auth_url = build_google_auth_url(redirect_uri=uri, next_path=next_path)
+    except CustomerAuthError as exc:
+        raise _http(exc) from exc
+    return GoogleAuthStartResponse(auth_url=auth_url, state=encode_oauth_state(next_path))
+
+
+@router.post("/google", response_model=AuthSessionResponse)
+def google_login(payload: GoogleLoginRequest, db: Session = Depends(get_db)) -> AuthSessionResponse:
+    try:
+        if payload.id_token and payload.id_token.strip():
+            profile = verify_google_id_token(payload.id_token)
+        elif payload.access_token and payload.access_token.strip():
+            profile = verify_google_access_token(payload.access_token)
+        elif payload.code and payload.code.strip():
+            profile = exchange_google_code(
+                payload.code,
+                (payload.redirect_uri or "").strip() or default_redirect_uri(),
+            )
+        else:
+            raise CustomerAuthError("Send a Google id_token, access_token, or authorization code")
+        token, expires_at, customer, identity = _svc(db).login_with_google(
+            profile["email"],
+            profile.get("name") or "",
+        )
     except CustomerAuthError as exc:
         raise _http(exc) from exc
     return AuthSessionResponse(

@@ -17,28 +17,39 @@ from typing import Any, Dict, List, Optional
 from sqlalchemy.orm import Session
 
 from app.models.platform_setting import PlatformSetting
+from app.services.ecommerce.bd_locations import BD_DISTRICTS, DEFAULT_SUB_DISTRICTS
 
-DEFAULT_ZONES = [
-    "Dhaka",
-    "Chattogram",
-    "Khulna",
-    "Rajshahi",
-    "Sylhet",
-    "Barishal",
-    "Rangpur",
-    "Mymensingh",
-]
+# All 64 districts. Dhaka has its own rate; every other district is charged
+# shipping.rate_default (120).
+DEFAULT_ZONES = list(BD_DISTRICTS)
 
 DEFAULT_DISTRICT_RATES: Dict[str, str] = {
     "Dhaka": "60",
-    "Chattogram": "120",
-    "Khulna": "120",
-    "Rajshahi": "120",
-    "Sylhet": "120",
-    "Barishal": "120",
-    "Rangpur": "120",
-    "Mymensingh": "120",
 }
+
+DEFAULT_PICKUP_POINTS: List[Dict[str, str]] = [
+    {
+        "key": "idb-branch",
+        "label": "IDB Branch",
+        "address": "Shop# 315 (3rd Floor), BCS Computer City,\nIDB Bhaban, Agargaon, Dhaka-1207",
+        "phone": "01913-004278",
+        "map_url": "",
+    },
+    {
+        "key": "multiplan-branch",
+        "label": "Multiplan Branch",
+        "address": "Shop# 650/A (Level-06),\nNew Elephant Road, Dhaka-1205",
+        "phone": "01913-004278",
+        "map_url": "",
+    },
+    {
+        "key": "mirpur-branch",
+        "label": "Mirpur Branch",
+        "address": "Shop# 67 (5th Floor), Shah Ali Plaza,\nMirpur 10, Dhaka-1216",
+        "phone": "01913-004278",
+        "map_url": "",
+    },
+]
 
 SHIPPING_SETTING_DEFAULTS: Dict[str, str] = {
     # 0 = disabled (no auto free shipping)
@@ -54,6 +65,10 @@ SHIPPING_SETTING_DEFAULTS: Dict[str, str] = {
     "shipping.rate_same_day": "200",
     "shipping.zones": ",".join(DEFAULT_ZONES),
     "shipping.district_rates": json.dumps(DEFAULT_DISTRICT_RATES, ensure_ascii=False),
+    "shipping.pickup_points": json.dumps(DEFAULT_PICKUP_POINTS, ensure_ascii=False),
+    # Only the districts an admin has edited; the rest fall back to the built-in
+    # list, so this stays small instead of copying all 64 districts.
+    "shipping.sub_districts": "{}",
 }
 
 
@@ -121,6 +136,112 @@ def parse_district_rates(raw: Optional[str]) -> Dict[str, Decimal]:
     if not out:
         for name, val in DEFAULT_DISTRICT_RATES.items():
             out[name] = _decimal(val, Decimal("120"))
+    return out
+
+
+def parse_pickup_points(raw: Optional[str]) -> List[Dict[str, str]]:
+    """Read the admin-managed collection counters.
+
+    Anything unreadable falls back to the built-in pair rather than an empty
+    list — a customer who picked Pickup must always be told where to go.
+    """
+    text = (raw or "").strip()
+    if not text:
+        return [dict(p) for p in DEFAULT_PICKUP_POINTS]
+    try:
+        data = json.loads(text)
+    except (json.JSONDecodeError, TypeError, ValueError):
+        return [dict(p) for p in DEFAULT_PICKUP_POINTS]
+    if not isinstance(data, list):
+        return [dict(p) for p in DEFAULT_PICKUP_POINTS]
+
+    out: List[Dict[str, str]] = []
+    for index, entry in enumerate(data):
+        if not isinstance(entry, dict):
+            continue
+        label = str(entry.get("label") or "").strip()
+        if not label:
+            continue
+        key = str(entry.get("key") or "").strip() or f"point-{index + 1}"
+        out.append(
+            {
+                "key": key,
+                "label": label,
+                "address": str(entry.get("address") or "").strip(),
+                "phone": str(entry.get("phone") or "").strip(),
+                "map_url": str(entry.get("map_url") or "").strip(),
+            }
+        )
+    return out or [dict(p) for p in DEFAULT_PICKUP_POINTS]
+
+
+def _sub_district_overrides(raw: Optional[str]) -> Dict[str, List[str]]:
+    text = (raw or "").strip()
+    if not text or not text.startswith("{"):
+        return {}
+    try:
+        data = json.loads(text)
+    except (json.JSONDecodeError, TypeError, ValueError):
+        return {}
+    if not isinstance(data, dict):
+        return {}
+
+    out: Dict[str, List[str]] = {}
+    for district, names in data.items():
+        key = str(district).strip()
+        if not key:
+            continue
+        if isinstance(names, str):
+            names = names.replace("\n", ",").split(",")
+        if not isinstance(names, list):
+            continue
+        cleaned = [str(n).strip() for n in names]
+        out[key] = [n for n in cleaned if n]
+    return out
+
+
+# Districts renamed since the built-in list was compiled; a shop that uses the
+# current spelling must still find its sub-districts.
+DISTRICT_ALIASES: Dict[str, str] = {
+    "chattogram": "Chittagong",
+    "barishal": "Barisal",
+    "bogra": "Bogura",
+    "jessore": "Jashore",
+    "comilla": "Cumilla",
+    "cumilla": "Comilla",
+    "jashore": "Jessore",
+    "barisal": "Barishal",
+    "chittagong": "Chattogram",
+}
+
+
+def sub_districts_for(
+    districts: List[str],
+    overrides: Dict[str, List[str]],
+) -> Dict[str, List[str]]:
+    """Sub-districts to offer for each checkout district.
+
+    An admin edit wins; otherwise the built-in list is matched case-insensitively
+    so a district typed as "dhaka" still finds its upazilas. A district nobody
+    recognises gets itself, so the customer is never left with an empty list.
+    """
+    by_lower = {name.lower(): names for name, names in DEFAULT_SUB_DISTRICTS.items()}
+    override_by_lower = {name.lower(): names for name, names in overrides.items()}
+
+    out: Dict[str, List[str]] = {}
+    for district in districts:
+        name = (district or "").strip()
+        if not name:
+            continue
+        lower = name.lower()
+        chosen = override_by_lower.get(lower)
+        if chosen is None:
+            chosen = by_lower.get(lower)
+        if chosen is None:
+            alias = DISTRICT_ALIASES.get(lower)
+            if alias:
+                chosen = by_lower.get(alias.lower())
+        out[name] = list(chosen) if chosen else [name]
     return out
 
 
@@ -257,6 +378,25 @@ def list_available_shipping_options(db: Session) -> List[dict[str, Any]]:
     return out
 
 
+def shipping_label_overrides(db: Session) -> Dict[str, str]:
+    """Shop-chosen wording for the delivery buttons, keyed by method id.
+
+    Built-in names like "Store Pickup" suit most shops, but the wording belongs
+    to the shop — so it is a setting rather than a release.
+    """
+    rows = (
+        db.query(PlatformSetting)
+        .filter(PlatformSetting.key.like("shipping.%.label"))
+        .all()
+    )
+    out: Dict[str, str] = {}
+    for row in rows:
+        parts = row.key.split(".")
+        if len(parts) == 3 and str(row.value or "").strip():
+            out[parts[1]] = str(row.value).strip()
+    return out
+
+
 def shipping_options_payload(db: Session) -> dict[str, Any]:
     s = load_shipping_settings(db)
     zones = _split_list(s.get("shipping.zones"), DEFAULT_ZONES)
@@ -269,10 +409,14 @@ def shipping_options_payload(db: Session) -> dict[str, Any]:
 
     default_method = (s.get("shipping.default_method") or "standard").strip() or "standard"
     methods = list_available_shipping_options(db)
+    label_overrides = shipping_label_overrides(db)
     # Refresh district_rates on standard method with completed map
     for m in methods:
         if m.get("pricing") == "district":
             m["district_rates"] = {name: str(amount) for name, amount in rates.items()}
+        override = label_overrides.get(str(m.get("id") or ""))
+        if override:
+            m["label"] = override
 
     allowed_ids = {m["id"] for m in methods}
     if default_method not in allowed_ids and methods:
@@ -285,6 +429,11 @@ def shipping_options_payload(db: Session) -> dict[str, Any]:
         "free_threshold": str(_decimal(s.get("shipping.free_threshold"), Decimal("0"))),
         "default_method": default_method,
         "time_slots_enabled": _truthy(s.get("shipping.time_slots"), True),
+        "pickup_points": parse_pickup_points(s.get("shipping.pickup_points")),
+        "sub_districts": sub_districts_for(
+            zones,
+            _sub_district_overrides(s.get("shipping.sub_districts")),
+        ),
     }
 
 

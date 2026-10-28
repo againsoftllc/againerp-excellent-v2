@@ -23,7 +23,11 @@ from app.services.ecommerce.checkout_constants import PAYMENT_METHODS, PaymentMe
 PAYMENT_SETTING_DEFAULTS: Dict[str, bool] = {
     "payments.cod": True,
     "payments.online": True,
-    "payments.bank": True,
+    # Manual bank transfer (customer pays by hand, then sends a slip). Off by
+    # default and not exposed in the admin UI — the shop collects card/bank
+    # payments through SSLCommerz instead. Flip the stored setting to bring it
+    # back.
+    "payments.bank": False,
     "payments.partial": False,
 }
 
@@ -137,7 +141,7 @@ def list_available_payment_options(db: Session) -> List[PaymentMethodOption]:
                 continue
             out.append(PAYMENT_METHODS[method_id])
 
-    if flags.get("payments.bank", True) and "bank" in PAYMENT_METHODS:
+    if flags.get("payments.bank", False) and "bank" in PAYMENT_METHODS:
         out.append(PAYMENT_METHODS["bank"])
 
     # De-dupe while preserving order
@@ -151,11 +155,33 @@ def list_available_payment_options(db: Session) -> List[PaymentMethodOption]:
     return unique
 
 
+def payment_label_overrides(db: Session) -> Dict[str, str]:
+    """Shop-chosen wording for the checkout buttons.
+
+    The built-in names describe the gateway ("Card / SSLCommerz"), but a shop
+    often wants to describe what the customer is doing ("Bank Transfer"). Kept
+    as settings so the wording can change without a release.
+    """
+    rows = (
+        db.query(PlatformSetting)
+        .filter(PlatformSetting.key.like("payments.%.label"))
+        .all()
+    )
+    out: Dict[str, str] = {}
+    for row in rows:
+        # payments.<method>.label
+        parts = row.key.split(".")
+        if len(parts) == 3 and str(row.value or "").strip():
+            out[parts[1]] = str(row.value).strip()
+    return out
+
+
 def payment_options_as_dicts(db: Session) -> List[dict[str, Any]]:
+    overrides = payment_label_overrides(db)
     return [
         {
             "id": m.id,
-            "label": m.label,
+            "label": overrides.get(m.id, m.label),
             "description": m.description,
             "requires_gateway": m.requires_gateway,
             "plugin_id": m.plugin_id,

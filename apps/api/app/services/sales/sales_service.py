@@ -854,7 +854,10 @@ class SalesService:
     def delete_order(self, order_id: str, *, actor_id: Optional[str] = None) -> SalesOrder:
         order = self._require_order(order_id)
         if order.status not in {"draft", "cancelled"}:
-            raise HTTPException(status_code=400, detail="Only draft or cancelled orders can be deleted")
+            raise HTTPException(
+                status_code=400,
+                detail=f"{order.order_number} is {order.status} — only draft or cancelled orders can be deleted. Cancel it first.",
+            )
         customer_id = order.customer_id
         order.deleted_at = datetime.utcnow()
         order.updated_by = actor_id
@@ -903,15 +906,17 @@ class SalesService:
         )
         return duplicate
 
-    def bulk_delete_orders(self, order_ids: list[str], *, actor_id: Optional[str] = None) -> int:
+    def bulk_delete_orders(self, order_ids: list[str], *, actor_id: Optional[str] = None) -> tuple[int, list[dict]]:
+        """Deletes what it can; returns (deleted, skipped) where skipped says why each one stayed."""
         deleted = 0
+        skipped: list[dict] = []
         for order_id in order_ids:
             try:
                 self.delete_order(order_id, actor_id=actor_id)
                 deleted += 1
-            except HTTPException:
-                continue
-        return deleted
+            except HTTPException as exc:
+                skipped.append({"id": order_id, "reason": str(exc.detail)})
+        return deleted, skipped
 
     def bulk_update_order_status(
         self,
