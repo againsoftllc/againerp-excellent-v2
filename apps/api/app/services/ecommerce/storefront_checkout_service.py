@@ -563,8 +563,8 @@ class StorefrontCheckoutService:
         name = compose_person_name(request.billing.first_name, request.billing.last_name)
         code = "CUST-" + "".join(secrets.choice("ABCDEFGHJKLMNPQRSTUVWXYZ23456789") for _ in range(8))
         row = CommerceCustomer(
+            id=str(uuid.uuid4()),
             company_id=DEFAULT_COMPANY_ID,
-            party_id=user.party_id if user else None,
             customer_code=code,
             name=name,
             phone=request.billing.phone.strip(),
@@ -575,6 +575,14 @@ class StorefrontCheckoutService:
             customer_since=date.today(),
             status="active",
         )
+        # party_id is NOT NULL in this schema — reuse the logged-in user's Party if there is one,
+        # otherwise link/create a fresh Party for this guest checkout.
+        if user and user.party_id:
+            row.party_id = user.party_id
+        else:
+            from app.services.parties.commerce_party_bridge import ensure_party_for_customer
+
+            ensure_party_for_customer(self._db, row)
         self._db.add(row)
         self._db.flush()
         return row

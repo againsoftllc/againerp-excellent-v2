@@ -5,6 +5,7 @@ from datetime import datetime
 from typing import Optional
 
 from sqlalchemy import (
+    Boolean,
     DateTime,
     Float,
     ForeignKey,
@@ -77,6 +78,9 @@ class MarketingHappyHourSection(Base):
 
 class MarketingHappyHourDeal(Base):
     __tablename__ = "marketing_happy_hour_deals"
+    quantity: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    priority: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
     section_id: Mapped[str] = mapped_column(

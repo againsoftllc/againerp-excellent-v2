@@ -77,6 +77,7 @@ class StorefrontCustomerCase(Base):
     """Support / complaint / QC requests created by storefront customers."""
 
     __tablename__ = "storefront_customer_cases"
+    customer_seen_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
     customer_id: Mapped[str] = mapped_column(

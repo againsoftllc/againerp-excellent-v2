@@ -21,6 +21,10 @@ class CatalogProduct(Base):
     """
 
     __tablename__ = "catalog_products"
+    seo_keyphrase: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    sale_ends_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    pre_order_ends_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    contact_phone: Mapped[Optional[str]] = mapped_column(String(30), nullable=True)
 
     id: Mapped[str] = mapped_column(
         String(36),

@@ -13,6 +13,7 @@ from app.database import Base
 
 class CatalogProductVariant(Base):
     __tablename__ = "catalog_product_variants"
+    gallery_json: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
 
     id: Mapped[str] = mapped_column(
         String(36),

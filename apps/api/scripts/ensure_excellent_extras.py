@@ -47,3 +47,33 @@ def ensure_catalog_stock_status_columns() -> None:
                     "true, true, false, false, false, false, 'Call for Price', '#6c757d', true)"
                 )
             )
+
+
+def ensure_excellent_columns() -> None:
+    """Columns the Excellent storefront layer reads/writes that the Moharaz schema never had."""
+    statements = [
+        "ALTER TABLE catalog_product_variants ADD COLUMN IF NOT EXISTS gallery_json TEXT",
+        "ALTER TABLE catalog_products ADD COLUMN IF NOT EXISTS contact_phone VARCHAR(30)",
+        "ALTER TABLE catalog_products ADD COLUMN IF NOT EXISTS pre_order_ends_at TIMESTAMP",
+        "ALTER TABLE catalog_products ADD COLUMN IF NOT EXISTS sale_ends_at TIMESTAMP",
+        "ALTER TABLE catalog_products ADD COLUMN IF NOT EXISTS seo_keyphrase VARCHAR(255)",
+        "ALTER TABLE commerce_order_items ADD COLUMN IF NOT EXISTS attributes_json TEXT",
+        "ALTER TABLE marketing_coupons ADD COLUMN IF NOT EXISTS rules_json JSONB NOT NULL DEFAULT '{}'::jsonb",
+        "ALTER TABLE marketing_happy_hour_deals ADD COLUMN IF NOT EXISTS enabled BOOLEAN NOT NULL DEFAULT TRUE",
+        "ALTER TABLE marketing_happy_hour_deals ADD COLUMN IF NOT EXISTS priority INTEGER NOT NULL DEFAULT 0",
+        "ALTER TABLE marketing_happy_hour_deals ADD COLUMN IF NOT EXISTS quantity INTEGER",
+        "ALTER TABLE marketing_offers ADD COLUMN IF NOT EXISTS custom_link VARCHAR(500)",
+        "ALTER TABLE marketing_offers ADD COLUMN IF NOT EXISTS daily_end_hour INTEGER",
+        "ALTER TABLE marketing_offers ADD COLUMN IF NOT EXISTS daily_start_hour INTEGER",
+        "ALTER TABLE marketing_offers ADD COLUMN IF NOT EXISTS subtitle VARCHAR(255)",
+        "ALTER TABLE marketing_offers ADD COLUMN IF NOT EXISTS terms_json TEXT NOT NULL DEFAULT '[]'",
+        "ALTER TABLE storefront_customer_cases ADD COLUMN IF NOT EXISTS customer_seen_at TIMESTAMP",
+        "ALTER TABLE website_chat_messages ADD COLUMN IF NOT EXISTS payload_json TEXT",
+        "ALTER TABLE website_chat_messages ADD COLUMN IF NOT EXISTS reaction VARCHAR(16)",
+        "ALTER TABLE website_settings ADD COLUMN IF NOT EXISTS more_to_love_count INTEGER NOT NULL DEFAULT 6",
+        "ALTER TABLE website_wishlists ADD COLUMN IF NOT EXISTS kind VARCHAR(16) NOT NULL DEFAULT 'wishlist'",
+        "CREATE INDEX IF NOT EXISTS ix_website_wishlists_kind ON website_wishlists (kind)",
+    ]
+    with engine.begin() as conn:
+        for stmt in statements:
+            conn.execute(text(stmt))

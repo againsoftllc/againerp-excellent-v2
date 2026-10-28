@@ -11,6 +11,11 @@ class Settings(BaseSettings):
         extra="ignore",
     )
 
+    # Storefront "Continue with Google" — set GOOGLE_OAUTH_CLIENT_ID to enable.
+    # Client secret is optional (needed only for redirect/code exchange).
+    google_oauth_client_id: str = ""
+    google_oauth_client_secret: str = ""
+
     app_name: str = "AgainERP API"
     app_env: str = "development"
     app_debug: bool = True

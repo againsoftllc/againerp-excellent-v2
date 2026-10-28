@@ -5,7 +5,7 @@ from datetime import datetime
 from decimal import Decimal
 from typing import Optional
 
-from sqlalchemy import DateTime, ForeignKey, Integer, Numeric, String, func
+from sqlalchemy import DateTime, ForeignKey, Integer, Numeric, String, Text, func
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.database import Base
@@ -13,6 +13,7 @@ from app.database import Base
 
 class CommerceOrderItem(Base):
     __tablename__ = "commerce_order_items"
+    attributes_json: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
 
     id: Mapped[str] = mapped_column(
         String(36),

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from sqlalchemy import DateTime, String, Text, func
+from sqlalchemy import DateTime, Integer, String, Text, func
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.database import Base
@@ -14,6 +14,7 @@ class WebsiteSettings(Base):
     """Singleton website configuration — branding + company contact info."""
 
     __tablename__ = "website_settings"
+    more_to_love_count: Mapped[int] = mapped_column(Integer, nullable=False, default=6)
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=DEFAULT_WEBSITE_SETTINGS_ID)
     company_id: Mapped[str] = mapped_column(String(36), nullable=False, default="default")

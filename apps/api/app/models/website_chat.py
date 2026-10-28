@@ -45,6 +45,8 @@ class WebsiteChatConversation(Base):
 
 class WebsiteChatMessage(Base):
     __tablename__ = "website_chat_messages"
+    reaction: Mapped[Optional[str]] = mapped_column(String(16), nullable=True)
+    payload_json: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
     conversation_id: Mapped[str] = mapped_column(
