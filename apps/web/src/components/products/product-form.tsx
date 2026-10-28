@@ -1375,7 +1375,7 @@ export function ProductForm({
                 initialCustomGroups={initialCustomGroups}
                 initialCustomAttrs={initialCustomAttrs}
                 sourceUrl={productDetail?.sourceUrl ?? null}
-                defaultHideEmpty={mode === "edit"}
+                defaultHideEmpty={false}
                 onChange={handleSpecChange}
               />
             </Section>
