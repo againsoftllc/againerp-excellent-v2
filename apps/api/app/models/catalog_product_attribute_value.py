@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import uuid
 from datetime import datetime
+from typing import Optional
 
 from sqlalchemy import DateTime, ForeignKey, Integer, String, Text, UniqueConstraint, func
 from sqlalchemy.orm import Mapped, mapped_column
@@ -36,6 +37,8 @@ class CatalogProductAttributeValue(Base):
         index=True,
     )
     value: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    # Range attributes: `value` is the chosen range (what the shop filter matches), this is the exact figure shown in the spec table.
+    display_value: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     sort_order: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     created_at: Mapped[datetime] = mapped_column(
         DateTime,

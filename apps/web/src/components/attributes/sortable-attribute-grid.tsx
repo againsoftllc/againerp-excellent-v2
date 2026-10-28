@@ -23,10 +23,11 @@ function reorderByKey<T extends { key: string }>(items: T[], fromKey: string, to
   return copy;
 }
 
-const DISPLAY_TYPES = FILTER_DISPLAY_CHOICES;
+// Range = the admin lists buckets (15-17 Inch …); a product picks one and may type its exact figure.
+const DISPLAY_TYPES: FilterDisplayType[] = [...FILTER_DISPLAY_CHOICES, "range"];
 
 /** An attribute is single-select (radio / one value) or multi-select (checkboxes / several values) - old values read as single. */
-const kindOf = (t?: FilterDisplayType): FilterDisplayType => (t === "multi_select" ? "multi_select" : "single_select");
+const kindOf = (t?: FilterDisplayType): FilterDisplayType => (t === "multi_select" || t === "range" ? t : "single_select");
 
 const DISPLAY_TYPE_COLORS: Record<FilterDisplayType, string> = {
   single_select: "bg-sky-100 text-sky-700 dark:bg-sky-900/40 dark:text-sky-300",
@@ -229,7 +230,7 @@ export function SortableAttributeGrid({
                     "h-5 max-w-[7.5rem] shrink-0 cursor-pointer rounded-none border-0 px-1.5 text-[10px] font-medium outline-none",
                     DISPLAY_TYPE_COLORS[kindOf(attr.filterDisplayType)],
                   )}
-                  title="Single select = radio buttons, one value per product. Multi-select = checkboxes, a product can have several values."
+                  title="Single select = radio buttons, one value per product. Multi-select = checkboxes, a product can have several values. Range = you list the ranges here; a product picks one and can type its exact figure (the shop filter shows the ranges only)."
                 >
                   {DISPLAY_TYPES.map((type) => (
                     <option key={type} value={type}>

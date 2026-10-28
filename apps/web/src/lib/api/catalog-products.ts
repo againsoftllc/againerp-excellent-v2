@@ -184,6 +184,8 @@ export type ProductSpecValue = {
   attributeCode: string;
   attributeName: string;
   value: string;
+  /** Range attributes: the exact figure shown in the spec table (`value` is the chosen range). */
+  displayValue?: string;
 };
 
 export type ProductSpecs = {
@@ -582,7 +584,7 @@ export async function replaceProductMedia(
 }
 
 export async function fetchProductSpecs(productId: string): Promise<ProductSpecs> {
-  const res = await apiFetch<{ data: { attribute_profile_id: string | null; values: { attribute_id: string; attribute_code: string; attribute_name: string; value: string }[] } }>(
+  const res = await apiFetch<{ data: { attribute_profile_id: string | null; values: { attribute_id: string; attribute_code: string; attribute_name: string; value: string; display_value?: string | null }[] } }>(
     `/api/v1/catalog/products/${productId}/specs`,
   );
   return {
@@ -592,15 +594,16 @@ export async function fetchProductSpecs(productId: string): Promise<ProductSpecs
       attributeCode: v.attribute_code,
       attributeName: v.attribute_name,
       value: v.value,
+      displayValue: v.display_value ?? undefined,
     })),
   };
 }
 
 export async function replaceProductSpecs(
   productId: string,
-  payload: { attributeProfileId: string | null; values: { attributeId: string; value: string; sortOrder?: number }[] },
+  payload: { attributeProfileId: string | null; values: { attributeId: string; value: string; displayValue?: string; sortOrder?: number }[] },
 ): Promise<ProductSpecs> {
-  const res = await apiFetch<{ data: { attribute_profile_id: string | null; values: { attribute_id: string; attribute_code: string; attribute_name: string; value: string }[] } }>(
+  const res = await apiFetch<{ data: { attribute_profile_id: string | null; values: { attribute_id: string; attribute_code: string; attribute_name: string; value: string; display_value?: string | null }[] } }>(
     `/api/v1/catalog/products/${productId}/specs`,
     {
       method: "PUT",
@@ -609,6 +612,7 @@ export async function replaceProductSpecs(
         values: payload.values.map((v, idx) => ({
           attribute_id: v.attributeId,
           value: v.value,
+          display_value: v.displayValue ?? null,
           sort_order: v.sortOrder ?? idx,
         })),
       }),
@@ -621,6 +625,7 @@ export async function replaceProductSpecs(
       attributeCode: v.attribute_code,
       attributeName: v.attribute_name,
       value: v.value,
+      displayValue: v.display_value ?? undefined,
     })),
   };
 }

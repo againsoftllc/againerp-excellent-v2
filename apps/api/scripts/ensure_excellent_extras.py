@@ -53,6 +53,7 @@ def ensure_excellent_columns() -> None:
     """Columns the Excellent storefront layer reads/writes that the Moharaz schema never had."""
     statements = [
         "ALTER TABLE catalog_product_variants ADD COLUMN IF NOT EXISTS gallery_json TEXT",
+        "ALTER TABLE catalog_product_attribute_values ADD COLUMN IF NOT EXISTS display_value TEXT",
         "ALTER TABLE catalog_products ADD COLUMN IF NOT EXISTS contact_phone VARCHAR(30)",
         "ALTER TABLE catalog_products ADD COLUMN IF NOT EXISTS pre_order_ends_at TIMESTAMP",
         "ALTER TABLE catalog_products ADD COLUMN IF NOT EXISTS sale_ends_at TIMESTAMP",

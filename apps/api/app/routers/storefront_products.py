@@ -667,7 +667,8 @@ def _load_specifications(db: Session, catalog_product_id: Optional[str]) -> list
         if group.name not in groups:
             groups[group.name] = StorefrontSpecGroupRead(name=group.name, specs=[])
             order.append(group.name)
-        groups[group.name].specs.append(StorefrontSpecItemRead(label=attr.name, value=val.value))
+        shown = (val.display_value or "").strip() or val.value
+        groups[group.name].specs.append(StorefrontSpecItemRead(label=attr.name, value=shown))
     profile_specs = [groups[name] for name in order]
     if profile_specs:
         return profile_specs

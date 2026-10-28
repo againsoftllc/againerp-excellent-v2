@@ -732,10 +732,15 @@ export function ProductForm({
     void import("@/lib/api/catalog-products").then(({ fetchProductSpecs }) =>
       fetchProductSpecs(productDetail.id).then((specs) => {
         const vmap: Record<string, string> = { ...elimValues };
-        for (const item of specs.values) vmap[item.attributeId] = item.value;
+        const dmap: Record<string, string> = {};
+        for (const item of specs.values) {
+          vmap[item.attributeId] = item.value;
+          if (item.displayValue) dmap[item.attributeId] = item.displayValue;
+        }
         setSpecDraft({
           profileId: specs.attributeProfileId ?? productDetail.attributeProfileId ?? "",
           valuesByAttributeId: vmap,
+          displayValuesByAttributeId: dmap,
           customGroups: parsedCustomGroups,
           customAttrs: parsedCustomAttrs,
         });
@@ -753,7 +758,12 @@ export function ProductForm({
     const vals = ordered
       .filter((id) => !id.startsWith("custom-") && !id.startsWith("cgroup-"))
       .filter((id) => specDraft.valuesByAttributeId[id]?.trim())
-      .map((attributeId, idx) => ({ attributeId, value: specDraft.valuesByAttributeId[attributeId].trim(), sortOrder: idx }));
+      .map((attributeId, idx) => ({
+        attributeId,
+        value: specDraft.valuesByAttributeId[attributeId].trim(),
+        displayValue: specDraft.displayValuesByAttributeId?.[attributeId]?.trim() || undefined,
+        sortOrder: idx,
+      }));
     await replaceProductSpecs(productId, {
       attributeProfileId: specDraft.profileId || null,
       values: vals,
@@ -1372,6 +1382,7 @@ export function ProductForm({
                 productId={initialProduct?.id}
                 initialProfileId={specDraft.profileId}
                 initialValues={specDraft.valuesByAttributeId}
+                initialDisplayValues={specDraft.displayValuesByAttributeId}
                 initialCustomGroups={initialCustomGroups}
                 initialCustomAttrs={initialCustomAttrs}
                 sourceUrl={productDetail?.sourceUrl ?? null}

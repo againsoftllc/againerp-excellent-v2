@@ -51,6 +51,8 @@ export type CustomSpecAttr = { id: string; groupId: string; name: string };
 export type ProductSpecsDraft = {
   profileId: string;
   valuesByAttributeId: Record<string, string>;
+  /** Range attributes only: exact figure typed under the chosen range, by attribute id. */
+  displayValuesByAttributeId?: Record<string, string>;
   customGroups?: CustomSpecGroup[];
   customAttrs?: CustomSpecAttr[];
   orderedAttributeIds?: string[];
@@ -60,6 +62,7 @@ type Props = {
   productId?: string;
   initialProfileId?: string | null;
   initialValues?: Record<string, string>;
+  initialDisplayValues?: Record<string, string>;
   initialCustomGroups?: CustomSpecGroup[];
   initialCustomAttrs?: CustomSpecAttr[];
   /** The product's source page — default URL for Fill. */
@@ -69,7 +72,7 @@ type Props = {
   onChange?: (draft: ProductSpecsDraft) => void;
 };
 
-export function ProductSpecEditor({ initialProfileId, initialValues, initialCustomGroups, initialCustomAttrs, sourceUrl, defaultHideEmpty = false, onChange }: Props) {
+export function ProductSpecEditor({ initialProfileId, initialValues, initialDisplayValues, initialCustomGroups, initialCustomAttrs, sourceUrl, defaultHideEmpty = false, onChange }: Props) {
   const { profiles, groups, attributes, loading, refetch: refetchProfiles } = useCatalogAttributeProfiles();
   const [listOpen, setListOpen] = useState(false);
   /** the profile opened from the specification list (edited in the Edit Profile drawer) */
@@ -77,6 +80,9 @@ export function ProductSpecEditor({ initialProfileId, initialValues, initialCust
 
   const [profileId, setProfileId] = useState(initialProfileId ?? "");
   const [values, setValues] = useState<Record<string, string>>(initialValues ?? {});
+  const [displayValues, setDisplayValues] = useState<Record<string, string>>(initialDisplayValues ?? {});
+  const displayRef = useRef(displayValues);
+  displayRef.current = displayValues;
   const [collapsed, setCollapsed] = useState<Record<string, boolean>>({});
   const [groupOrder, setGroupOrder] = useState<string[] | null>(null);
   const [attrOrder, setAttrOrder] = useState<Record<string, string[]>>({});
@@ -126,6 +132,7 @@ export function ProductSpecEditor({ initialProfileId, initialValues, initialCust
     loadedRef.current = true;
     if (initialProfileId) setProfileId(initialProfileId);
     if (initialValues) setValues(initialValues);
+    if (initialDisplayValues) setDisplayValues(initialDisplayValues);
     if (initialCustomGroups?.length) setCustomGroups(initialCustomGroups);
     if (initialCustomAttrs?.length) {
       const byGroup: Record<string, Array<{ id: string; name: string }>> = {};
@@ -179,6 +186,7 @@ export function ProductSpecEditor({ initialProfileId, initialValues, initialCust
     onChangeRef.current?.({
       profileId,
       valuesByAttributeId: values,
+      displayValuesByAttributeId: displayRef.current,
       customGroups,
       customAttrs: Object.entries(localAttrs).flatMap(([gid, arr]) =>
         arr.map((a) => ({ id: a.id, groupId: gid, name: a.name })),
@@ -257,14 +265,29 @@ export function ProductSpecEditor({ initialProfileId, initialValues, initialCust
     const resolvedAttrOrder = (gid: string) =>
       (newAttrOrder ?? attrOrder)[gid] ?? defaultAttrOrder[gid] ?? [];
     const orderedAttributeIds = resolvedGroupOrder.flatMap((gid) => resolvedAttrOrder(gid));
-    onChangeRef.current?.({ profileId, valuesByAttributeId: newValues, customGroups: cg, customAttrs, orderedAttributeIds });
+    onChangeRef.current?.({ profileId, valuesByAttributeId: newValues, displayValuesByAttributeId: displayRef.current, customGroups: cg, customAttrs, orderedAttributeIds });
   };
 
   const setValue = (attributeId: string, val: string) => {
     const next = { ...values, [attributeId]: val };
     setValues(next);
+    // deselecting a range drops the exact figure typed under it
+    if (!val && displayRef.current[attributeId]) {
+      const nd = { ...displayRef.current };
+      delete nd[attributeId];
+      displayRef.current = nd;
+      setDisplayValues(nd);
+    }
     setTouchedIds((s) => (s.has(attributeId) ? s : new Set(s).add(attributeId)));
     emitChange(next);
+  };
+
+  const setDisplayValue = (attributeId: string, val: string) => {
+    const nd = { ...displayRef.current, [attributeId]: val };
+    displayRef.current = nd;
+    setDisplayValues(nd);
+    setTouchedIds((s) => (s.has(attributeId) ? s : new Set(s).add(attributeId)));
+    emitChange(values);
   };
 
   const toggleGroup = (gid: string) =>
@@ -690,6 +713,8 @@ export function ProductSpecEditor({ initialProfileId, initialValues, initialCust
                                 attr={attr}
                                 value={values[attr.id] ?? ""}
                                 onChange={(v) => setValue(attr.id, v)}
+                                displayValue={displayValues[attr.id] ?? ""}
+                                onDisplayChange={(v) => setDisplayValue(attr.id, v)}
                                 isDragActive={activeId === attr.id}
                                 predefinedValues={getPredefined(attr)}
                                 filterEditOpen={filterEditAttrId === attr.id}
@@ -1076,12 +1101,14 @@ function SortableGroupRow({
 
 /* ── Sortable attr row ── */
 function SortableAttrRow({
-  attr, value, onChange, isDragActive,
+  attr, value, onChange, displayValue, onDisplayChange, isDragActive,
   predefinedValues, filterEditOpen, onFilterEditToggle, onPredefinedAdd, onPredefinedRemove, onHide,
 }: {
   attr: AttributeSpec;
   value: string;
   onChange: (v: string) => void;
+  displayValue: string;
+  onDisplayChange: (v: string) => void;
   isDragActive: boolean;
   predefinedValues: string[];
   filterEditOpen: boolean;
@@ -1144,6 +1171,8 @@ function SortableAttrRow({
                 attr={attr}
                 value={value}
                 onChange={onChange}
+                displayValue={displayValue}
+                onDisplayChange={onDisplayChange}
                 predefinedValues={predefinedValues}
               />
             </div>
@@ -1229,9 +1258,43 @@ function FilterListEditor({
 }
 
 /* ── Compact value input ── */
-function CompactValueInput({ attr, value, onChange, predefinedValues }: { attr: AttributeSpec; value: string; onChange: (v: string) => void; predefinedValues?: string[] }) {
+function CompactValueInput({ attr, value, onChange, predefinedValues, displayValue = "", onDisplayChange }: { attr: AttributeSpec; value: string; onChange: (v: string) => void; predefinedValues?: string[]; displayValue?: string; onDisplayChange?: (v: string) => void }) {
   const effectivePredefined = predefinedValues ?? attr.predefinedValues ?? [];
   const cls = "h-6 py-0 leading-6 text-[11px]";
+
+  // Range: pick one of the listed ranges (this is what the shop filter uses), then type the exact figure for the spec table.
+  if (attr.filterDisplayType === "range" && effectivePredefined.length) {
+    return (
+      <div className="space-y-1">
+        <div className="flex flex-wrap gap-1">
+          {effectivePredefined.map((opt) => (
+            <button
+              key={opt}
+              type="button"
+              onClick={() => onChange(value === opt ? "" : opt)}
+              className={cn(
+                "rounded-none border px-1.5 py-px text-[10px] transition-colors",
+                value === opt
+                  ? "border-primary bg-primary text-primary-foreground"
+                  : "border-input bg-background hover:border-primary/50",
+              )}
+            >
+              {opt}
+            </button>
+          ))}
+        </div>
+        {value ? (
+          <input
+            type="text"
+            value={displayValue}
+            onChange={(e) => onDisplayChange?.(e.target.value)}
+            placeholder={attr.unit ? `Exact value (${attr.unit}) — shown on the product page` : "Exact value — shown on the product page"}
+            className="h-6 w-full rounded-none border border-input bg-background px-1.5 text-[11px] outline-none focus:border-primary"
+          />
+        ) : null}
+      </div>
+    );
+  }
 
   // multi-select first: a filterable spec can hold several values (a cooler fits AM4 and AM5)
   if (attr.fieldType === "multi_select" && effectivePredefined.length) {

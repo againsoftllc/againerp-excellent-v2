@@ -231,6 +231,7 @@ class ProductSpecValueRead(BaseModel):
     attribute_code: str
     attribute_name: str
     value: str
+    display_value: Optional[str] = None
     sort_order: int = 0
 
 
@@ -242,6 +243,7 @@ class ProductSpecsRead(BaseModel):
 class ProductSpecValueUpsert(BaseModel):
     attribute_id: str
     value: str = ""
+    display_value: Optional[str] = None
     sort_order: int = 0
 
 

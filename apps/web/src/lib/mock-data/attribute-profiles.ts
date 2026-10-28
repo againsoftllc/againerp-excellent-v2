@@ -244,7 +244,7 @@ export function profileToBulkForm(
         id: attr.id,
         name: attr.name,
         filterable: attr.isFilterable,
-        filterDisplayType: attr.filterDisplayType === "multi_select" ? "multi_select" : "single_select",
+        filterDisplayType: attr.filterDisplayType === "multi_select" || attr.filterDisplayType === "range" ? attr.filterDisplayType : "single_select",
         storefrontFilterVisible: attr.storefrontFilterVisible ?? true,
         predefinedValues: attr.predefinedValues ?? [],
       })),

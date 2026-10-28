@@ -125,7 +125,8 @@ class BulkAttributeItem(BaseModel):
     predefined_values: List[str] = []
 
     def normalized_display_type(self) -> str:
-        return "multi_select" if (self.filter_display_type or "").strip().lower() == "multi_select" else "single_select"
+        kind = (self.filter_display_type or "").strip().lower()
+        return kind if kind in ("multi_select", "range") else "single_select"
 
 
 class BulkAttributeGroupItem(BaseModel):

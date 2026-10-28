@@ -809,6 +809,7 @@ def _load_product_specs(db: Session, product: CatalogProduct) -> ProductSpecsRea
                 attribute_code=attr.code,
                 attribute_name=attr.name,
                 value=val.value,
+                display_value=val.display_value,
                 sort_order=val.sort_order,
             )
             for val, attr in rows
@@ -846,6 +847,7 @@ def _replace_product_specs(db: Session, product: CatalogProduct, payload: Produc
                 product_id=product.id,
                 attribute_id=item.attribute_id,
                 value=item.value or "",
+                display_value=(item.display_value or "").strip() or None,
                 sort_order=item.sort_order if item.sort_order != 0 else idx,
             ),
         )
@@ -1298,6 +1300,7 @@ def duplicate_product(
                 product_id=clone.id,
                 attribute_id=val.attribute_id,
                 value=val.value,
+                display_value=val.display_value,
                 sort_order=val.sort_order,
             ),
         )

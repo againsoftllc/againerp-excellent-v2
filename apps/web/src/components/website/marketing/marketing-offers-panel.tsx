@@ -19,6 +19,9 @@ import {
 import { useMarketingOffers } from "@/lib/api/use-marketing-offers";
 import { useCatalogCategories } from "@/lib/api/use-catalog-categories";
 import { CategoryCombobox } from "@/components/categories/category-combobox";
+import { MediaLibraryModal } from "@/components/media/media-library-modal";
+import { MediaPickTile } from "@/components/media/media-pick-tile";
+import { createCatalogMediaBatch, uploadCatalogMediaFiles, useCatalogMedia } from "@/lib/api/use-catalog-media";
 import { useIsDark } from "@/lib/use-is-dark";
 import { useAdminCanWrite } from "@/lib/hooks/use-admin-can-write";
 import { useViewerWriteUrlGuard } from "@/lib/hooks/use-viewer-write-url-guard";
@@ -338,6 +341,8 @@ function OfferFormSheet({
   const [slug, setSlug] = useState("");
   const [description, setDescription] = useState("");
   const [imageUrl, setImageUrl] = useState("");
+  const [libraryOpen, setLibraryOpen] = useState(false);
+  const { items: mediaItems, refetch: refetchMedia } = useCatalogMedia();
   const [outlet, setOutlet] = useState("All Outlet");
   const [status, setStatus] = useState<OfferStatus>("running");
   const [productsLimit, setProductsLimit] = useState("12");
@@ -420,6 +425,7 @@ function OfferFormSheet({
     setSections((rows) => rows.filter((_, i) => i !== index));
 
   return (
+    <>
     <Sheet open={open} onOpenChange={onOpenChange}>
       <SheetContent
         side="right"
@@ -465,8 +471,19 @@ function OfferFormSheet({
               onChange={(e) => setDescription(e.target.value)}
             />
           </Field>
-          <Field label="Image URL">
-            <Input className="rounded-none" value={imageUrl} onChange={(e) => setImageUrl(e.target.value)} />
+          <Field label="Offer image">
+            <MediaPickTile
+              url={imageUrl}
+              alt="Offer image"
+              onChange={setImageUrl}
+              onPick={() => {
+                void refetchMedia();
+                setLibraryOpen(true);
+              }}
+            />
+            <p className="text-[11px] text-muted-foreground">
+              Same media library as product images. Pick from the library, or drop a file to upload.
+            </p>
           </Field>
           <Field label="Outlet label">
             <Input className="rounded-none" value={outlet} onChange={(e) => setOutlet(e.target.value)} />
@@ -634,6 +651,32 @@ function OfferFormSheet({
         </div>
       </SheetContent>
     </Sheet>
+    <MediaLibraryModal
+      open={libraryOpen}
+      onOpenChange={(next) => {
+        setLibraryOpen(next);
+        if (next) void refetchMedia();
+      }}
+      items={mediaItems}
+      mode="single"
+      title="Offer image"
+      accept={["image"]}
+      onSelect={(items) => {
+        const next = items.find((item) => item.type === "image")?.url;
+        if (next) setImageUrl(next);
+      }}
+      onUploadFiles={async (files) => {
+        const uploaded = await uploadCatalogMediaFiles(files);
+        await refetchMedia();
+        return uploaded;
+      }}
+      onImportItems={async (items) => {
+        const saved = await createCatalogMediaBatch(items);
+        await refetchMedia();
+        return saved;
+      }}
+    />
+    </>
   );
 }
 

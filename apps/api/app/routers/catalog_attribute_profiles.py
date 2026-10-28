@@ -69,7 +69,9 @@ def _field_to_read(row: CatalogAttribute) -> AttributeFieldRead:
         is_searchable=row.is_searchable,
         is_visible=row.is_visible,
         is_active=row.is_active,
-        filter_display_type="multi_select" if row.field_type == "multi_select" else "single_select",
+        filter_display_type=(
+            "range" if row.field_type == "range" else "multi_select" if row.field_type == "multi_select" else "single_select"
+        ),
         storefront_filter_visible=bool(getattr(row, "storefront_filter_visible", True)),
         unit=row.unit,
         help_text=row.help_text,
@@ -520,7 +522,10 @@ def _replace_profile_structure(
             if renamed or not attr.code:
                 attr.code = slugify_code(attr_item.name)
             display = attr_item.normalized_display_type()
-            if attr_item.field_type:
+            if display == "range" and attr_item.filterable:
+                # Range: the admin lists the buckets (predefined values); a product picks one and may type its exact figure
+                attr.field_type = "range"
+            elif attr_item.field_type and attr_item.field_type != "range":
                 attr.field_type = attr_item.field_type
             elif attr_item.filterable and (attr_item.predefined_values or attr.field_type in ("dropdown", "multi_select")):
                 # the filter's single / multi choice IS how the spec value is entered: one option, or several
@@ -529,7 +534,9 @@ def _replace_profile_structure(
                 attr.field_type = "dropdown" if attr_item.predefined_values else "text"
             attr.sort_order = attr_index
             attr.is_filterable = attr_item.filterable
-            attr.filter_display_type = "multi_select" if attr.field_type == "multi_select" else "single_select"
+            attr.filter_display_type = (
+                "range" if attr.field_type == "range" else "multi_select" if attr.field_type == "multi_select" else "single_select"
+            )
             attr.storefront_filter_visible = bool(attr_item.storefront_filter_visible)
             attr.predefined_values = json.dumps(attr_item.predefined_values or [])
             db.flush()
