@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Pencil, Search, Trash2 } from "lucide-react";
+import { Pencil, Plus, Search, Trash2 } from "lucide-react";
 import { Sheet, SheetContent } from "@/components/ui/sheet";
 import { cn } from "@/lib/utils";
 import type { Brand } from "@/lib/mock-data/brands";
@@ -16,6 +16,8 @@ type Props = {
   onRename?: (brand: Brand, name: string) => Promise<void> | void;
   /** Open the full edit drawer for a brand (replaces the inline rename). */
   onEdit?: (brand: Brand) => void;
+  /** Open the create drawer. Replaces the inline add box with a + button. */
+  onAddRequest?: () => void;
   onDelete?: (brand: Brand) => Promise<void> | void;
 };
 
@@ -28,6 +30,7 @@ export function BrandPickDrawer({
   onCreate,
   onRename,
   onEdit,
+  onAddRequest,
   onDelete,
 }: Props) {
   const [search, setSearch] = useState("");
@@ -139,10 +142,21 @@ export function BrandPickDrawer({
               placeholder="Search brands…"
               className="h-6 w-full bg-transparent text-[12px] outline-none placeholder:text-muted-foreground"
             />
+            {onAddRequest ? (
+              <button
+                type="button"
+                className="ml-1 inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-none text-muted-foreground hover:bg-muted hover:text-foreground"
+                aria-label="Add brand"
+                title="Add brand"
+                onClick={() => onAddRequest()}
+              >
+                <Plus className="h-4 w-4" />
+              </button>
+            ) : null}
           </div>
           <div className="min-h-0 flex-1 overflow-y-auto py-1">
             <div className="px-1">
-              {onCreate && !searching ? (
+              {onCreate && !onAddRequest && !searching ? (
                 <div className="px-1 py-0.5">
                   <input
                     value={draft}

@@ -24,6 +24,8 @@ type Props = {
   onRename?: (node: CategoryNode, name: string) => Promise<void> | void;
   /** Open the full edit drawer for a category (replaces the inline rename). */
   onEdit?: (node: CategoryNode) => void;
+  /** Open the create drawer (parent preset, null = top level). Replaces the inline add boxes with a + button. */
+  onAddRequest?: (parentId: string | null) => void;
   onDelete?: (node: CategoryNode) => Promise<void> | void;
 };
 
@@ -322,6 +324,7 @@ export function CategoryPickDrawer({
   onCreate,
   onRename,
   onEdit,
+  onAddRequest,
   onDelete,
 }: Props) {
   const [search, setSearch] = useState("");
@@ -489,10 +492,21 @@ export function CategoryPickDrawer({
               placeholder="Search categories…"
               className="h-6 w-full bg-transparent text-[12px] outline-none placeholder:text-muted-foreground"
             />
+            {onAddRequest ? (
+              <button
+                type="button"
+                className="ml-1 inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-none text-muted-foreground hover:bg-muted hover:text-foreground"
+                aria-label="Add category"
+                title="Add category"
+                onClick={() => onAddRequest(null)}
+              >
+                <Plus className="h-4 w-4" />
+              </button>
+            ) : null}
           </div>
           <div className="min-h-0 flex-1 overflow-y-auto py-1">
             <div className="px-1">
-              {onCreate && !searching ? (
+              {onCreate && !onAddRequest && !searching ? (
                 <div className="px-1 py-0.5">
                   <input
                     value={rootDraft}
@@ -516,7 +530,7 @@ export function CategoryPickDrawer({
               ) : null}
               {displayTree.length === 0 ? (
                 <p className="px-2 py-3 text-[12px] text-muted-foreground">
-                  {onCreate && !searching
+                  {onCreate && !onAddRequest && !searching
                     ? "No categories yet — type a name above and press Enter."
                     : "No categories"}
                 </p>
@@ -542,7 +556,7 @@ export function CategoryPickDrawer({
                     onSelect(node.id, node.name);
                     if (!multiple) onOpenChange(false);
                   }}
-                  onStartAdd={onCreate ? startAdd : undefined}
+                  onStartAdd={onAddRequest ? (id) => onAddRequest(id) : onCreate ? startAdd : undefined}
                   onStartEdit={onEdit ?? (onRename ? startEdit : undefined)}
                   onDelete={
                     onDelete

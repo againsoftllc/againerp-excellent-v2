@@ -1779,6 +1779,10 @@ export function ProductForm({
             toast.error(err instanceof Error ? err.message : "Failed to delete category");
           }
         }}
+        onAddRequest={(parentId) => {
+          setAddCategoryParentId(parentId);
+          setAddCategoryOpen(true);
+        }}
         onEdit={(node) => {
           const cat = categories.find((c) => c.id === node.id);
           if (cat) setEditingCategory(cat);
@@ -1837,6 +1841,7 @@ export function ProductForm({
             toast.error(err instanceof Error ? err.message : "Failed to delete brand");
           }
         }}
+        onAddRequest={() => setAddBrandOpen(true)}
         onEdit={(brand) => setEditingBrand(brand)}
         onRename={async (brand, name) => {
           try {
