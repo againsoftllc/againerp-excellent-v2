@@ -1,7 +1,7 @@
 import { getStorefrontBaseUrl } from "@/lib/website/live-edit";
 import type { WebsiteManagedPage } from "@/lib/website/pages/types";
 
-/** @deprecated Admin shell — Home Live Edit opens the storefront editor instead. */
+/** Admin full-screen Live Edit for the Home page. */
 export const HOME_LIVE_EDIT = "/website/live-edit/home";
 export const CATEGORY_LIVE_EDIT = "/website/live-edit/category";
 export const CONTENT_LIVE_EDIT = "/website/live-edit/content";
@@ -29,13 +29,6 @@ export function normalizeCategoryStorefrontPath(raw: string | null | undefined):
 export function categoryLiveEditUrl(hrefOrSlug: string | null | undefined): string {
   const base = getStorefrontBaseUrl().replace(/\/$/, "");
   return `${base}${normalizeCategoryStorefrontPath(hrefOrSlug)}`;
-}
-
-/** Working homepage Live Edit (storefront :3010) — same as website login flow. */
-export function storefrontHomepageLiveEditUrl(): string {
-  const base = getStorefrontBaseUrl().replace(/\/$/, "") || "http://localhost:3010";
-  // Prefer /home directly — middleware sends unauthenticated users to login with next=.
-  return `${base}/website/live-edit/home`;
 }
 
 export function isHomePage(page: WebsiteManagedPage) {
@@ -76,11 +69,11 @@ export function storefrontPathForPage(page: WebsiteManagedPage): string {
 
 /**
  * Live Edit entry URL.
- * Home → storefront Live Edit (login + editor). Same product as opening
- * http://localhost:3010/website/live-edit directly.
+ * Home → the admin's own full-screen Live Edit (`/website/live-edit/home`), which frames the
+ * storefront in `?liveEdit=1` mode. The admin session is used, so there is no separate sign-in.
  */
 export function liveEditAdminUrl(page: WebsiteManagedPage): string | null {
-  if (isHomePage(page)) return storefrontHomepageLiveEditUrl();
+  if (isHomePage(page)) return HOME_LIVE_EDIT;
   return null;
 }
 

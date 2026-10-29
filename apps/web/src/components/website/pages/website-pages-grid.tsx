@@ -256,7 +256,7 @@ export const WebsitePagesGrid = forwardRef<WebsitePagesGridHandle, Props>(
     const openLiveEdit = useCallback((page: WebsiteManagedPage) => {
       const url = liveEditAdminUrl(page);
       if (!url) {
-        toast.info("Live Edit is available for the Home Page (opens storefront editor)");
+        toast.info("Live Edit is available for the Home Page");
         return;
       }
       window.open(url, "_blank", "noopener,noreferrer");
