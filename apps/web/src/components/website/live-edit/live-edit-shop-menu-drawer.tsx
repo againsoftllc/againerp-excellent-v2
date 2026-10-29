@@ -67,8 +67,8 @@ export function LiveEditShopMenuDrawer({
 }: Props) {
   const titleId = useId();
   const { menus, slots, loading, refetch, saveSlots, update } = useWebsiteMenus();
-  const { categories } = useCatalogCategories({ channel: "dropshipping" });
-  const { brands } = useCatalogBrands({ channel: "dropshipping" });
+  const { categories } = useCatalogCategories({ channel: "catalog" });
+  const { brands } = useCatalogBrands({});
   const { pages } = useWebsitePages();
   const pageOptions = pages.map((p) => ({ id: p.id, name: p.name, url: p.url }));
 

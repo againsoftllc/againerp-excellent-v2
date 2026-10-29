@@ -331,7 +331,7 @@ export function CatalogAutoMenuTree({
     catalogParentId: null,
   });
   const { categories, refetch: refetchCategories } = useCatalogCategories({
-    channel: "dropshipping",
+    channel: "catalog",
   });
   const canAddCategory = autoType === "category";
   const canAddBrand = autoType === "brand";
@@ -532,7 +532,7 @@ export function CatalogAutoMenuTree({
                 bannerUrl: data.bannerUrl,
                 iconMediaId: data.iconMediaId,
                 bannerMediaId: data.bannerMediaId,
-                channel: "dropshipping",
+                channel: "catalog",
               });
               await refetchCategories();
               const menuItem = categoryToMenuItem(created, newItemsHidden);
@@ -570,7 +570,7 @@ export function CatalogAutoMenuTree({
                 bannerUrl: data.bannerUrl,
                 logoMediaId: data.logoMediaId,
                 bannerMediaId: data.bannerMediaId,
-                channel: "dropshipping",
+                channel: "catalog",
               });
               const menuItem = brandToMenuItem(created, newItemsHidden);
               onChange([...items, menuItem]);

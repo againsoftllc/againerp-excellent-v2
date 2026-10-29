@@ -306,9 +306,7 @@ export function LiveEditBrandsDrawer({ onBack, open, onOpenChange, content, onCh
   const [picker, setPicker] = useState<PickerMode>(null);
   const [addBrandOpen, setAddBrandOpen] = useState(false);
   const [addBrandForIndex, setAddBrandForIndex] = useState<number | null>(null);
-  const { brands, refetch: refetchBrands } = useCatalogBrands({
-    channel: "dropshipping",
-  });
+  const { brands, refetch: refetchBrands } = useCatalogBrands({});
   const { items: mediaItems, refetch: refetchMedia } = useCatalogMedia();
 
   const sensors = useSensors(
@@ -588,7 +586,7 @@ export function LiveEditBrandsDrawer({ onBack, open, onOpenChange, content, onCh
               bannerUrl: data.bannerUrl,
               logoMediaId: data.logoMediaId,
               bannerMediaId: data.bannerMediaId,
-              channel: "dropshipping",
+              channel: "catalog",
             });
             await refetchBrands();
             if (addBrandForIndex != null) {

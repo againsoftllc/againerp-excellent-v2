@@ -309,7 +309,7 @@ export function LiveEditCategoriesDrawer({ open,
   const [addCategoryOpen, setAddCategoryOpen] = useState(false);
   const [addCategoryForIndex, setAddCategoryForIndex] = useState<number | null>(null);
   const { categories, refetch: refetchCategories } = useCatalogCategories({
-    channel: "dropshipping",
+    channel: "catalog",
   });
   const { items: mediaItems, refetch: refetchMedia } = useCatalogMedia();
 
@@ -549,7 +549,7 @@ export function LiveEditCategoriesDrawer({ open,
               bannerUrl: data.bannerUrl,
               iconMediaId: data.iconMediaId,
               bannerMediaId: data.bannerMediaId,
-              channel: "dropshipping",
+              channel: "catalog",
             });
             await refetchCategories();
             if (addCategoryForIndex != null) {

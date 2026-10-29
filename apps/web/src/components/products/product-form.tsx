@@ -385,7 +385,8 @@ export function ProductForm({
   const [addCategoryParentId, setAddCategoryParentId] = useState<string | null>(null);
   const [listCategoryOpen, setListCategoryOpen] = useState(false);
   const { brands, refetch: refetchBrands } = useCatalogBrands({
-    channel: categoryChannel,
+    // Brands from an older import can carry the dropshipping tag; the catalog form lists every one of them.
+    channel: categoryChannel === "catalog" ? undefined : categoryChannel,
   });
   const [addBrandOpen, setAddBrandOpen] = useState(false);
   const [listBrandOpen, setListBrandOpen] = useState(false);
