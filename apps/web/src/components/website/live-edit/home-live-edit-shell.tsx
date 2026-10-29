@@ -10,7 +10,7 @@ import { getStorefrontBaseUrl } from "@/lib/website/live-edit";
 export function HomeLiveEditShell() {
   useEffect(() => {
     const base = getStorefrontBaseUrl().replace(/\/$/, "") || "http://localhost:3010";
-    window.location.replace(`${base}/website/live-edit/home`);
+    window.location.replace(`${base}/?liveEdit=1`);
   }, []);
 
   return (

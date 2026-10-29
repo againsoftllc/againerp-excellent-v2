@@ -15,7 +15,10 @@ from app.schemas.storefront_account import (
     GoogleAuthStartResponse,
     GoogleLoginRequest,
     IdentifierRequest,
+    LoginPasswordRequest,
     LoginPinRequest,
+    RegisterPasswordRequest,
+    SetPasswordRequest,
     MeResponse,
     OkResponse,
     RequestOtpResponse,
@@ -94,6 +97,51 @@ def verify_otp(payload: VerifyOtpRequest, db: Session = Depends(get_db)) -> Auth
         token=token,
         expires_at=expires_at,
         customer=CustomerMeRead(**StorefrontCustomerAuthService.customer_to_me(customer, identity)),
+    )
+
+
+def _session_response(token, expires_at, customer, identity) -> AuthSessionResponse:
+    return AuthSessionResponse(
+        token=token,
+        expires_at=expires_at,
+        customer=CustomerMeRead(**StorefrontCustomerAuthService.customer_to_me(customer, identity)),
+    )
+
+
+@router.post("/register", response_model=AuthSessionResponse, status_code=201)
+def register_with_password(payload: RegisterPasswordRequest, db: Session = Depends(get_db)) -> AuthSessionResponse:
+    try:
+        result = _svc(db).register_password(
+            name=payload.name, phone=payload.phone, email=payload.email, password=payload.password
+        )
+    except CustomerAuthError as exc:
+        raise _http(exc) from exc
+    return _session_response(*result)
+
+
+@router.post("/login", response_model=AuthSessionResponse)
+def login_with_password(payload: LoginPasswordRequest, db: Session = Depends(get_db)) -> AuthSessionResponse:
+    try:
+        result = _svc(db).login_password(payload.identifier, payload.password)
+    except CustomerAuthError as exc:
+        raise _http(exc) from exc
+    return _session_response(*result)
+
+
+@router.put("/password", response_model=MeResponse)
+def set_password(
+    payload: SetPasswordRequest,
+    ctx: CustomerAuthContext = Depends(get_current_storefront_customer),
+    db: Session = Depends(get_db),
+) -> MeResponse:
+    _session, identity, customer = ctx
+    try:
+        _svc(db).set_password(identity, payload.password, payload.confirm_password, payload.current_password)
+    except CustomerAuthError as exc:
+        raise _http(exc) from exc
+    db.refresh(identity)
+    return MeResponse(
+        data=CustomerMeRead(**StorefrontCustomerAuthService.customer_to_me(customer, identity)),
     )
 
 

@@ -23,6 +23,7 @@ import {
   EyeOff,
   FolderOpen,
   GripVertical,
+  MousePointerClick,
   Plus,
   Trash2,
 } from "lucide-react";
@@ -40,6 +41,7 @@ import {
 import type { Brand } from "@/lib/mock-data/brands";
 import type { Category } from "@/lib/mock-data/categories";
 import { cn } from "@/lib/utils";
+import { categoryLiveEditUrl } from "@/lib/website/pages/page-actions";
 import type { MenuLinkType, WebsiteMenuItem } from "@/lib/website/website-menus";
 import { defaultMenuItem } from "@/lib/website/website-menus";
 
@@ -97,9 +99,34 @@ function linkTypeLabel(type: MenuLinkType) {
       return "Category";
     case "brand":
       return "Brand";
+    case "dropshipping":
+      return "Dropshipping";
     default:
       return "URL";
   }
+}
+
+/** Dropshipping stores a search keyword in href (or legacy /search?q= / ds:// forms). */
+function dropshippingKeywordFromHref(href: string): string {
+  const h = (href || "").trim();
+  if (!h) return "";
+  if (h.startsWith("ds://")) {
+    try {
+      const sp = new URLSearchParams(h.slice(5));
+      return (sp.get("q") || sp.get("u") || "").trim();
+    } catch {
+      return "";
+    }
+  }
+  if (h.startsWith("/search")) {
+    try {
+      return new URL(h, "http://local").searchParams.get("q") || "";
+    } catch {
+      return "";
+    }
+  }
+  if (h.startsWith("/") || /^https?:\/\//i.test(h)) return "";
+  return h;
 }
 
 function SortableMenuRow({
@@ -127,6 +154,11 @@ function SortableMenuRow({
     id: item.id,
   });
   const isHidden = Boolean(item.hidden);
+  // Custom category rows store the reference, not the href — fall back to the catalog slug.
+  const liveEditPath =
+    item.linkType === "category"
+      ? item.href.trim() || categories.find((c) => c.id === item.linkRefId)?.slug || ""
+      : "";
 
   return (
     <div
@@ -177,11 +209,29 @@ function SortableMenuRow({
             </span>
             <span
               className="hidden max-w-[120px] shrink-0 truncate text-[10px] text-muted-foreground sm:inline"
-              title={item.href}
+              title={
+                item.linkType === "dropshipping"
+                  ? dropshippingKeywordFromHref(item.href) || item.href
+                  : item.href
+              }
             >
-              {item.href || "—"}
+              {item.linkType === "dropshipping"
+                ? dropshippingKeywordFromHref(item.href) || item.href || "—"
+                : item.href || "—"}
             </span>
           </>
+        ) : null}
+
+        {liveEditPath ? (
+          <button
+            type="button"
+            className="inline-flex h-6 w-6 shrink-0 items-center justify-center rounded text-muted-foreground hover:bg-muted hover:text-[#00a09d]"
+            aria-label={`Live Edit ${item.label || "category"}`}
+            title="Live Edit this category page"
+            onClick={() => window.open(categoryLiveEditUrl(liveEditPath), "_blank")}
+          >
+            <MousePointerClick className="h-3.5 w-3.5" />
+          </button>
         ) : null}
 
         <button
@@ -221,19 +271,36 @@ function SortableMenuRow({
               value={item.linkType}
               onValueChange={(v) => {
                 const linkType = v as MenuLinkType;
+                const keyword = dropshippingKeywordFromHref(item.href);
+                let href = "";
+                if (linkType === "dropshipping") {
+                  href =
+                    item.linkType === "dropshipping"
+                      ? keyword || item.href
+                      : keyword || item.label.trim() || "";
+                } else if (linkType === "custom") {
+                  href =
+                    item.linkType === "dropshipping" && keyword
+                      ? `/search?q=${encodeURIComponent(keyword)}`
+                      : item.href;
+                }
                 onPatch({
                   linkType,
                   linkRefId: null,
-                  href: linkType === "custom" ? item.href : "",
+                  href,
                 });
               }}
             >
-              <SelectTrigger className="h-8 text-[13px]">
+              <SelectTrigger
+                className="h-8 text-[13px]"
+                onPointerDown={(e) => e.stopPropagation()}
+              >
                 <SelectValue />
               </SelectTrigger>
-              <SelectContent>
+              <SelectContent className="z-[400]" position="popper">
                 <SelectItem value="page">Page</SelectItem>
                 <SelectItem value="category">Category</SelectItem>
+                <SelectItem value="dropshipping">Dropshipping</SelectItem>
                 <SelectItem value="brand">Brand</SelectItem>
                 <SelectItem value="custom">Custom URL</SelectItem>
               </SelectContent>
@@ -253,10 +320,13 @@ function SortableMenuRow({
                   });
                 }}
               >
-                <SelectTrigger className="h-8 text-[13px]">
+                <SelectTrigger
+                  className="h-8 text-[13px]"
+                  onPointerDown={(e) => e.stopPropagation()}
+                >
                   <SelectValue placeholder="Select page" />
                 </SelectTrigger>
-                <SelectContent>
+                <SelectContent className="z-[400]" position="popper">
                   {pages.map((p) => (
                     <SelectItem key={p.id} value={p.id}>
                       {p.name}
@@ -295,6 +365,25 @@ function SortableMenuRow({
                   })
                 }
                 className="w-full"
+              />
+            </AgainFormRow>
+          ) : null}
+
+          {item.linkType === "dropshipping" ? (
+            <AgainFormRow
+              label="Keyword"
+              help="China marketplace search — opens /search?q=… (SkyBuy-style)"
+            >
+              <Input
+                value={dropshippingKeywordFromHref(item.href)}
+                onChange={(e) =>
+                  onPatch({
+                    href: e.target.value.trim(),
+                    linkRefId: null,
+                  })
+                }
+                className="h-8 text-[13px]"
+                placeholder="e.g. sneakers, hand bags, keyboard"
               />
             </AgainFormRow>
           ) : null}

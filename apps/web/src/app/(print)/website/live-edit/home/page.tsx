@@ -1,13 +1,10 @@
-import { redirect } from "next/navigation";
+import { ExcellentLiveEditEmbedPanel } from "@/components/website/live-edit/excellent-live-edit-embed-panel";
 
 /**
- * Admin Live Edit for Home → storefront Live Edit (same as :3010 login flow).
- * Server redirect avoids a stuck "Opening…" client page.
+ * Full-screen Live Edit for Home — toolbar on top (Save, lock, Section, device
+ * switcher) with the real storefront below in `?liveEdit=1` mode. No admin
+ * sidebar (print group).
  */
 export default function WebsiteHomeLiveEditPage() {
-  const base = (
-    process.env.NEXT_PUBLIC_STOREFRONT_URL?.trim() ||
-    "http://localhost:3010"
-  ).replace(/\/$/, "");
-  redirect(`${base}/website/live-edit/home`);
+  return <ExcellentLiveEditEmbedPanel shell />;
 }

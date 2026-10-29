@@ -18,7 +18,6 @@ import {
 import { CSS } from "@dnd-kit/utilities";
 import {
   ChevronDown,
-  ChevronsRight,
   Copy,
   Eye,
   EyeOff,
@@ -38,6 +37,7 @@ import {
   AGAIN_DRAWER_MODULE_LABEL_CLASS,
   AGAIN_DRAWER_RECORD_LABEL_CLASS,
 } from "@/components/again/again-drawer";
+import { LiveEditDrawerBackButton } from "@/components/website/live-edit/live-edit-drawer-back-button";
 import { LiveEditDrawerSaveButton } from "@/components/website/live-edit/live-edit-drawer-save-button";
 import { AgainFormRow, AgainUnderlineInput } from "@/components/again/again-form-sheet";
 import { BrandCombobox } from "@/components/brands/brand-combobox";
@@ -61,6 +61,8 @@ import { defaultBrandItem, defaultBrandsSection } from "@/lib/website/website-ho
 
 type Props = {
   open: boolean;
+  /** Return to the Sections list (falls back to closing the drawer). */
+  onBack?: () => void;
   onOpenChange: (open: boolean) => void;
   content: HomepageContent;
   onChange?: (content: HomepageContent) => void;
@@ -295,7 +297,7 @@ function SortableBrandRow({
   );
 }
 
-export function LiveEditBrandsDrawer({ open, onOpenChange, content, onChange, onSave, saving = false }: Props) {
+export function LiveEditBrandsDrawer({ onBack, open, onOpenChange, content, onChange, onSave, saving = false }: Props) {
   const titleId = useId();
   const [section, setSection] = useState<BrandsSection>(
     content.brands ?? defaultBrandsSection(),
@@ -441,15 +443,7 @@ export function LiveEditBrandsDrawer({ open, onOpenChange, content, onChange, on
           <AgainDrawerControlBar
             trailing={<LiveEditDrawerSaveButton onSave={onSave} saving={saving} />}
           >
-            <button
-              type="button"
-              className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-md text-muted-foreground hover:bg-muted hover:text-foreground"
-              aria-label="Close drawer"
-              title="Close"
-              onClick={() => onOpenChange(false)}
-            >
-              <ChevronsRight className="h-4 w-4" />
-            </button>
+            <LiveEditDrawerBackButton onBack={() => (onBack ? onBack() : onOpenChange(false))} />
             <span className={AGAIN_DRAWER_MODULE_LABEL_CLASS}>Website</span>
             <span className="text-muted-foreground">/</span>
             <span className={AGAIN_DRAWER_RECORD_LABEL_CLASS} id={titleId}>

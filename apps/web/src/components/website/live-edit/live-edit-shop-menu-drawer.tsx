@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useId, useMemo, useState } from "react";
-import { ChevronsRight, SquarePen } from "lucide-react";
+import { Eye, EyeOff } from "lucide-react";
 import { toast } from "sonner";
 import {
   AgainDrawerControlBar,
@@ -11,12 +11,16 @@ import {
   AGAIN_DRAWER_ACTION_BTN,
   AGAIN_DRAWER_FIELD_SHEET_CLASS,
   AGAIN_DRAWER_MODULE_LABEL_CLASS,
+  AGAIN_DRAWER_PRIMARY_BTN,
+  AGAIN_DRAWER_PRIMARY_COLOR,
   AGAIN_DRAWER_RECORD_LABEL_CLASS,
 } from "@/components/again/again-drawer";
-import { LiveEditDrawerSaveButton } from "@/components/website/live-edit/live-edit-drawer-save-button";
 import { AgainFormRow } from "@/components/again/again-form-sheet";
-import { WebsiteMenuFormDrawer } from "@/components/website/menus/website-menu-form-drawer";
+import { CatalogAutoMenuTree } from "@/components/website/menus/catalog-auto-menu-tree";
+import { CustomMenuTree } from "@/components/website/menus/custom-menu-tree";
 import { Button } from "@/components/ui/button";
+import { LiveEditDrawerBackButton } from "@/components/website/live-edit/live-edit-drawer-back-button";
+import { Input } from "@/components/ui/input";
 import {
   Select,
   SelectContent,
@@ -24,137 +28,96 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { Switch } from "@/components/ui/switch";
+import { useCatalogBrands } from "@/lib/api/use-catalog-brands";
+import { useCatalogCategories } from "@/lib/api/use-catalog-categories";
 import { useWebsiteMenus } from "@/lib/api/use-website-menus";
+import { useWebsitePages } from "@/lib/api/use-website-pages";
 import { fetchWebsiteMenu } from "@/lib/api/website-menus";
 import { cn } from "@/lib/utils";
-import type { WebsiteMenu, WebsiteMenuItem, MenuNavStyle } from "@/lib/website/website-menus";
+import type {
+  MenuAutoType,
+  MenuNavStyle,
+  MenuSource,
+  WebsiteMenu,
+  WebsiteMenuItem,
+} from "@/lib/website/website-menus";
 import { autoTypeLabel } from "@/lib/website/website-menus";
-import { Input } from "@/components/ui/input";
-import {
-  menuItemsToShopPreview,
-  type ShopPreviewCategory,
-} from "@/lib/website/shop-menu-preview";
 
 const SHOP_SLOT = "catalog.shop";
 
 type Props = {
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  /** After slot applied — reload storefront + open SHOP megamenu. */
+  /** Return to Sections list (Live Edit). */
+  onBack?: () => void;
+  /** After slot / menu applied — reload storefront + open SHOP megamenu. */
   onApplied?: () => void;
   onSave?: () => void | Promise<void>;
   saving?: boolean;
 };
 
-function MegamenuDesignPreview({ categories }: { categories: ShopPreviewCategory[] }) {
-  const [activeIndex, setActiveIndex] = useState(0);
-  const active = categories[activeIndex] ?? null;
-
-  useEffect(() => {
-    setActiveIndex(0);
-  }, [categories]);
-
-  if (categories.length === 0) {
-    return (
-      <p className="px-3 py-6 text-center text-[12px] text-muted-foreground">
-        No visible items yet. Click the edit icon beside the menu to open its tree, or sync Auto
-        Category under Website → Menus.
-      </p>
-    );
-  }
-
-  return (
-    <div className="flex max-h-[360px] overflow-hidden rounded-md border border-border bg-background">
-      <div className="w-[150px] shrink-0 overflow-y-auto border-r border-border py-1">
-        <p className="px-2.5 pb-1 pt-1.5 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
-          Parents
-        </p>
-        {categories.map((cat, i) => (
-          <button
-            key={cat.id}
-            type="button"
-            onMouseEnter={() => setActiveIndex(i)}
-            onClick={() => setActiveIndex(i)}
-            className={cn(
-              "flex w-full items-center justify-between gap-1 px-2.5 py-2 text-left text-[12px]",
-              i === activeIndex
-                ? "bg-[#fdecea] font-semibold text-[#d32f2f] dark:bg-[#d32f2f]/15"
-                : "text-foreground hover:bg-muted/50",
-            )}
-          >
-            <span className="truncate">{cat.name}</span>
-            <span className="text-[10px] text-muted-foreground">›</span>
-          </button>
-        ))}
-      </div>
-      <div className="min-w-0 flex-1 overflow-y-auto p-3">
-        <p className="mb-2 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
-          {active ? `Under “${active.name}”` : "Children"}
-        </p>
-        {!active ? (
-          <p className="text-[12px] text-muted-foreground">Hover a parent on the left.</p>
-        ) : active.hasGroups ? (
-          <div className="grid grid-cols-2 gap-x-4 gap-y-3 sm:grid-cols-3">
-            {active.groups.map((group) => (
-              <div key={group.id} className="min-w-0">
-                <p className="mb-1 truncate text-[12px] font-semibold text-foreground">{group.name}</p>
-                <ul className="m-0 list-none space-y-1 p-0">
-                  {group.links.map((link) => (
-                    <li key={link.id} className="truncate text-[11px] text-muted-foreground">
-                      {link.name}
-                    </li>
-                  ))}
-                </ul>
-              </div>
-            ))}
-          </div>
-        ) : (
-          <div className="grid grid-cols-2 gap-x-4 gap-y-1.5 sm:grid-cols-3">
-            {active.sub.map((s) => (
-              <span key={s.id} className="truncate text-[12px] text-foreground">
-                {s.name}
-              </span>
-            ))}
-          </div>
-        )}
-      </div>
-    </div>
-  );
-}
-
-export function LiveEditShopMenuDrawer({ open, onOpenChange, onApplied, onSave, saving = false }: Props) {
+export function LiveEditShopMenuDrawer({
+  open,
+  onOpenChange,
+  onBack,
+  onApplied,
+  onSave,
+  saving = false,
+}: Props) {
   const titleId = useId();
   const { menus, slots, loading, refetch, saveSlots, update } = useWebsiteMenus();
+  const { categories } = useCatalogCategories({ channel: "dropshipping" });
+  const { brands } = useCatalogBrands({ channel: "dropshipping" });
+  const { pages } = useWebsitePages();
+  const pageOptions = pages.map((p) => ({ id: p.id, name: p.name, url: p.url }));
+
   const [menuId, setMenuId] = useState("");
   const [triggerTitle, setTriggerTitle] = useState("SHOP");
   const [navStyle, setNavStyle] = useState<MenuNavStyle>("megamenu");
-  const [preview, setPreview] = useState<WebsiteMenu | null>(null);
-  const [previewLoading, setPreviewLoading] = useState(false);
-  const [applying, setApplying] = useState(false);
-  const [menuEditorOpen, setMenuEditorOpen] = useState(false);
   const [editingMenu, setEditingMenu] = useState<WebsiteMenu | null>(null);
-  const [openingEditor, setOpeningEditor] = useState(false);
+  const [name, setName] = useState("");
+  const [source, setSource] = useState<MenuSource>("custom");
+  const [autoType, setAutoType] = useState<MenuAutoType>("category");
+  const [autoShowNew, setAutoShowNew] = useState(true);
+  const [items, setItems] = useState<WebsiteMenuItem[]>([]);
+  const [menuLoading, setMenuLoading] = useState(false);
+  const [applying, setApplying] = useState(false);
 
   const shopSlot = useMemo(
     () => slots.find((s) => s.slotKey === SHOP_SLOT),
     [slots],
   );
 
-  const shopCategories = useMemo(
-    () => (preview ? menuItemsToShopPreview(preview.items) : []),
-    [preview],
-  );
-
-  const refreshPreview = async (id: string) => {
-    const row = await fetchWebsiteMenu(id);
-    setPreview(row);
-    return row;
+  const loadMenuIntoEditor = async (id: string) => {
+    setMenuLoading(true);
+    try {
+      const full = await fetchWebsiteMenu(id);
+      setEditingMenu(full);
+      setName(full.name);
+      setSource(full.source);
+      setAutoType(full.autoType || "category");
+      setAutoShowNew(full.autoShowNew !== false);
+      const tree =
+        full.source === "auto"
+          ? full.items.length > 0
+            ? full.items
+            : full.autoPreview
+          : full.items;
+      setItems(tree);
+    } catch (err) {
+      setEditingMenu(null);
+      setItems([]);
+      toast.error(err instanceof Error ? err.message : "Failed to load menu");
+    } finally {
+      setMenuLoading(false);
+    }
   };
 
   useEffect(() => {
     if (!open) {
-      setMenuEditorOpen(false);
       setEditingMenu(null);
+      setItems([]);
       return;
     }
     void refetch();
@@ -169,57 +132,53 @@ export function LiveEditShopMenuDrawer({ open, onOpenChange, onApplied, onSave, 
 
   useEffect(() => {
     if (!open || !menuId) {
-      setPreview(null);
+      setEditingMenu(null);
+      setItems([]);
       return;
     }
-    let cancelled = false;
-    setPreviewLoading(true);
-    fetchWebsiteMenu(menuId)
-      .then((row) => {
-        if (!cancelled) setPreview(row);
-      })
-      .catch(() => {
-        if (!cancelled) setPreview(null);
-      })
-      .finally(() => {
-        if (!cancelled) setPreviewLoading(false);
-      });
-    return () => {
-      cancelled = true;
-    };
+    void loadMenuIntoEditor(menuId);
+    // Intentionally only when open/menuId changes — not on every render.
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- loadMenuIntoEditor is stable enough via menuId
   }, [open, menuId]);
 
-  const persistShopSlot = async (patch: {
+  const writeShopSlot = async (patch: {
     menuId?: string;
     title?: string;
     navStyle?: MenuNavStyle;
   }) => {
     const nextMenuId = patch.menuId ?? menuId;
     if (!nextMenuId) return;
+    const title = (patch.title ?? triggerTitle).trim() || "SHOP";
+    const style = patch.navStyle ?? navStyle;
+    const next = slots.map((s) =>
+      s.slotKey === SHOP_SLOT
+        ? {
+            slotKey: s.slotKey,
+            menuId: nextMenuId,
+            title,
+            navStyle: style,
+          }
+        : { slotKey: s.slotKey, menuId: s.menuId },
+    );
+    if (!next.some((s) => s.slotKey === SHOP_SLOT)) {
+      next.push({
+        slotKey: SHOP_SLOT,
+        menuId: nextMenuId,
+        title,
+        navStyle: style,
+      });
+    }
+    await saveSlots(next);
+  };
+
+  const persistShopSlot = async (patch: {
+    menuId?: string;
+    title?: string;
+    navStyle?: MenuNavStyle;
+  }) => {
     setApplying(true);
     try {
-      const title = (patch.title ?? triggerTitle).trim() || "SHOP";
-      const style = patch.navStyle ?? navStyle;
-      const next = slots.map((s) =>
-        s.slotKey === SHOP_SLOT
-          ? {
-              slotKey: s.slotKey,
-              menuId: nextMenuId,
-              title,
-              navStyle: style,
-            }
-          : { slotKey: s.slotKey, menuId: s.menuId },
-      );
-      if (!next.some((s) => s.slotKey === SHOP_SLOT)) {
-        next.push({
-          slotKey: SHOP_SLOT,
-          menuId: nextMenuId,
-          title,
-          navStyle: style,
-        });
-      }
-      await saveSlots(next);
-      toast.success("Shop menu updated");
+      await writeShopSlot(patch);
       onApplied?.();
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Failed to save");
@@ -228,84 +187,91 @@ export function LiveEditShopMenuDrawer({ open, onOpenChange, onApplied, onSave, 
     }
   };
 
-  const openMenuEditor = async () => {
-    if (!menuId) {
-      toast.error("Select a menu first");
+  const handleSaveMenu = async () => {
+    if (!editingMenu) {
+      toast.error("No menu loaded");
       return;
     }
-    setOpeningEditor(true);
+    const trimmed = name.trim();
+    if (!trimmed) {
+      toast.error("Menu name is required");
+      return;
+    }
+    setApplying(true);
     try {
-      const full = await fetchWebsiteMenu(menuId);
-      setEditingMenu(full);
-      setMenuEditorOpen(true);
+      await update(editingMenu.id, {
+        name: trimmed,
+        source,
+        autoType,
+        autoShowNew,
+        items,
+      });
+      await writeShopSlot({});
+      await refetch();
+      await loadMenuIntoEditor(editingMenu.id);
+      onApplied?.();
+      if (onSave) await onSave();
+      toast.success("Shop menu saved");
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Failed to load menu");
+      toast.error(err instanceof Error ? err.message : "Save failed");
     } finally {
-      setOpeningEditor(false);
+      setApplying(false);
     }
   };
 
-  const handleMenuEditorSave = async (data: {
-    name: string;
-    source: WebsiteMenu["source"];
-    autoType: WebsiteMenu["autoType"];
-    autoShowNew: boolean;
-    items: WebsiteMenuItem[];
-  }) => {
-    if (!editingMenu) return;
-    await update(editingMenu.id, {
-      name: data.name,
-      source: data.source,
-      autoType: data.autoType,
-      autoShowNew: data.autoShowNew,
-      items: data.items,
-    });
-    await refetch();
-    await refreshPreview(editingMenu.id);
-    // Keep this menu on Shop slot and refresh storefront megamenu.
-    if (menuId === editingMenu.id) {
-      onApplied?.();
-    }
-    toast.success("Menu saved — megamenu refreshed");
-    setMenuEditorOpen(false);
-    setEditingMenu(null);
-  };
+  const busy = loading || menuLoading || applying || saving;
 
   return (
-    <>
-      <AgainDrawerPanel
-        open={open}
-        onOpenChange={onOpenChange}
-        title="Shop menu"
-        resizable
-        defaultWidth={520}
-        widthStorageKey="website-live-edit-drawer-width"
-      >
-        <AgainDrawerLayout>
-          <AgainDrawerControlBar
-            trailing={
-              <LiveEditDrawerSaveButton onSave={onSave} saving={saving || applying} />
-            }
-          >
-            <button
+    <AgainDrawerPanel
+      open={open}
+      onOpenChange={onOpenChange}
+      title="Main menu"
+      resizable
+      defaultWidth={560}
+      widthStorageKey="website-live-edit-drawer-width"
+    >
+      <AgainDrawerLayout>
+        <AgainDrawerControlBar>
+            <LiveEditDrawerBackButton
+              onBack={() => (onBack ? onBack() : onOpenChange(false))}
+            />
+          <span className={AGAIN_DRAWER_MODULE_LABEL_CLASS}>Website</span>
+          <span className="text-muted-foreground">/</span>
+          <span className={AGAIN_DRAWER_RECORD_LABEL_CLASS} id={titleId}>
+            Main menu
+          </span>
+          <div className="ml-auto flex shrink-0 items-center gap-1.5">
+            <Button
               type="button"
-              className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-md text-muted-foreground hover:bg-muted hover:text-foreground"
-              aria-label="Close drawer"
+              variant="outline"
+              size="sm"
+              className={cn(AGAIN_DRAWER_ACTION_BTN, "h-7")}
               onClick={() => onOpenChange(false)}
+              disabled={busy}
             >
-              <ChevronsRight className="h-4 w-4" />
-            </button>
-            <span className={AGAIN_DRAWER_MODULE_LABEL_CLASS}>Website</span>
-            <span className="text-muted-foreground">/</span>
-            <span className={AGAIN_DRAWER_RECORD_LABEL_CLASS} id={titleId}>
-              Shop
-            </span>
-          </AgainDrawerControlBar>
+              Discard
+            </Button>
+            <Button
+              type="button"
+              size="sm"
+              className={cn(AGAIN_DRAWER_PRIMARY_BTN, "h-7")}
+              style={{ backgroundColor: AGAIN_DRAWER_PRIMARY_COLOR }}
+              onClick={() => void handleSaveMenu()}
+              disabled={busy || !editingMenu}
+            >
+              {applying ? "Saving…" : "Save"}
+            </Button>
+          </div>
+        </AgainDrawerControlBar>
 
-          <AgainDrawerScrollBody className={AGAIN_DRAWER_FIELD_SHEET_CLASS}>
-            <div className="space-y-4">
-              <div className="space-y-3 rounded-md border border-border bg-card p-2.5">
-                <AgainFormRow label="Menu title" help="Header button label (e.g. SHOP)">
+        <AgainDrawerScrollBody className={AGAIN_DRAWER_FIELD_SHEET_CLASS}>
+          <div className="space-y-4">
+            <div className="space-y-3 rounded-md border border-border bg-card p-2.5">
+              <p className="text-[12px] leading-snug text-muted-foreground">
+                This menu appears in the All Categories drawer and on category page side menus.
+              </p>
+              <div className="grid grid-cols-2 gap-2.5">
+                <AgainFormRow label="Button label">
                   <Input
                     value={triggerTitle}
                     onChange={(e) => setTriggerTitle(e.target.value)}
@@ -318,14 +284,10 @@ export function LiveEditShopMenuDrawer({ open, onOpenChange, onApplied, onSave, 
                     }}
                     className="h-8 text-[13px]"
                     placeholder="SHOP"
-                    disabled={applying}
+                    disabled={busy}
                   />
                 </AgainFormRow>
-
-                <AgainFormRow
-                  label="Menu style"
-                  help="Megamenu = wide panel · Dropdown = nested list with side flyouts"
-                >
+                <AgainFormRow label="Style">
                   <Select
                     value={navStyle}
                     onValueChange={(v) => {
@@ -333,111 +295,178 @@ export function LiveEditShopMenuDrawer({ open, onOpenChange, onApplied, onSave, 
                       setNavStyle(next);
                       if (menuId) void persistShopSlot({ navStyle: next });
                     }}
-                    disabled={applying || !menuId}
+                    disabled={busy || !menuId}
                   >
                     <SelectTrigger className="h-8 text-[13px]">
                       <SelectValue />
                     </SelectTrigger>
-                    <SelectContent>
+                    <SelectContent className="z-[400]">
                       <SelectItem value="megamenu">Megamenu</SelectItem>
                       <SelectItem value="dropdown">Dropdown</SelectItem>
                     </SelectContent>
                   </Select>
                 </AgainFormRow>
+              </div>
 
-                <AgainFormRow
-                  label="Menu"
-                  help="Content for this header button · icon opens menu editor"
+              <AgainFormRow label="Menu">
+                <Select
+                  value={menuId || undefined}
+                  onValueChange={(id) => {
+                    setMenuId(id);
+                    void persistShopSlot({ menuId: id });
+                  }}
+                  disabled={busy}
                 >
-                  <div className="flex items-center gap-1.5">
-                    <Select
-                      value={menuId || undefined}
-                      onValueChange={(id) => {
-                        setMenuId(id);
-                        void persistShopSlot({ menuId: id });
-                      }}
-                      disabled={loading || applying}
-                    >
-                      <SelectTrigger className="h-8 min-w-0 flex-1 text-[13px]">
-                        <SelectValue
-                          placeholder={
-                            loading ? "Loading…" : applying ? "Saving…" : "Select menu"
-                          }
-                        />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {menus.map((m) => (
-                          <SelectItem key={m.id} value={m.id}>
-                            {m.name}
-                            {m.source === "auto"
-                              ? ` · Auto · ${autoTypeLabel(m.autoType)}`
-                              : " · Custom"}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                    <Button
-                      type="button"
-                      variant="outline"
-                      size="icon"
-                      className="h-8 w-8 shrink-0"
-                      disabled={!menuId || openingEditor || applying}
-                      aria-label="Edit selected menu"
-                      title="Edit this menu"
-                      onClick={() => void openMenuEditor()}
-                    >
-                      <SquarePen className="h-3.5 w-3.5" />
-                    </Button>
-                  </div>
-                </AgainFormRow>
-              </div>
+                  <SelectTrigger className="h-8 text-[13px]">
+                    <SelectValue
+                      placeholder={loading ? "Loading…" : "Select menu"}
+                    />
+                  </SelectTrigger>
+                  <SelectContent className="z-[400]">
+                    {menus.map((m) => (
+                      <SelectItem key={m.id} value={m.id}>
+                        {m.name}
+                        {m.source === "auto"
+                          ? ` · Auto · ${autoTypeLabel(m.autoType)}`
+                          : " · Custom"}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </AgainFormRow>
 
-              <div className="space-y-2 rounded-md border border-border bg-card p-2.5">
-                <p className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
-                  {navStyle === "dropdown" ? "Dropdown preview" : "Megamenu preview"}
-                </p>
-                {previewLoading ? (
-                  <p className="py-6 text-center text-[12px] text-muted-foreground">Loading…</p>
-                ) : navStyle === "dropdown" ? (
-                  <div className="rounded-md border border-border bg-background p-2">
-                    <p className="mb-2 text-[11px] text-muted-foreground">
-                      Storefront: nested under “{triggerTitle || "SHOP"}”. Items with children open
-                      to the side.
-                    </p>
-                    <ul className="m-0 list-none space-y-1 p-0 text-[12px]">
-                      {(preview?.items ?? [])
-                        .filter((i) => !i.hidden)
-                        .slice(0, 8)
-                        .map((item) => (
-                          <li key={item.id} className="flex items-center justify-between gap-2 px-1 py-1">
-                            <span className="truncate text-foreground">{item.label}</span>
-                            {item.children.some((c) => !c.hidden) ? (
-                              <span className="text-[10px] text-muted-foreground">›</span>
-                            ) : null}
-                          </li>
-                        ))}
-                    </ul>
-                  </div>
-                ) : (
-                  <MegamenuDesignPreview categories={shopCategories} />
-                )}
-              </div>
+              {editingMenu ? (
+                <>
+                  <AgainFormRow label="Menu name">
+                    <Input
+                      value={name}
+                      onChange={(e) => setName(e.target.value)}
+                      className="h-8 text-[13px]"
+                      placeholder="Menu name"
+                      disabled={busy}
+                    />
+                  </AgainFormRow>
+                  <AgainFormRow label="Source">
+                    <div className="flex h-8 items-center gap-2">
+                      <span
+                        className={cn(
+                          "text-[12px]",
+                          source === "custom"
+                            ? "font-medium text-foreground"
+                            : "text-muted-foreground",
+                        )}
+                      >
+                        Custom
+                      </span>
+                      <Switch
+                        checked={source === "auto"}
+                        onCheckedChange={(checked) => {
+                          setSource(checked ? "auto" : "custom");
+                        }}
+                        disabled={busy}
+                      />
+                      <span
+                        className={cn(
+                          "text-[12px]",
+                          source === "auto"
+                            ? "font-medium text-foreground"
+                            : "text-muted-foreground",
+                        )}
+                      >
+                        Auto
+                      </span>
+                      <button
+                        type="button"
+                        disabled={source !== "auto" || busy}
+                        className={cn(
+                          "inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-md",
+                          source === "auto"
+                            ? "text-foreground hover:bg-muted"
+                            : "cursor-not-allowed text-muted-foreground/40",
+                        )}
+                        aria-label={
+                          autoShowNew
+                            ? "New synced items auto-visible"
+                            : "New synced items start hidden"
+                        }
+                        title={
+                          autoShowNew
+                            ? "New items appear visible"
+                            : "New items start hidden"
+                        }
+                        onClick={() => setAutoShowNew((v) => !v)}
+                      >
+                        {autoShowNew ? (
+                          <Eye className="h-3.5 w-3.5" />
+                        ) : (
+                          <EyeOff className="h-3.5 w-3.5" />
+                        )}
+                      </button>
+                    </div>
+                  </AgainFormRow>
+                  {source === "auto" ? (
+                    <AgainFormRow label="Auto from">
+                      <Select
+                        value={autoType}
+                        onValueChange={(value) =>
+                          setAutoType(value as MenuAutoType)
+                        }
+                        disabled={busy}
+                      >
+                        <SelectTrigger className="h-8 text-[13px]">
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent className="z-[400]">
+                          <SelectItem value="category">Category</SelectItem>
+                          <SelectItem value="brand">Brand</SelectItem>
+                          <SelectItem value="page">Page</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </AgainFormRow>
+                  ) : null}
+                </>
+              ) : null}
             </div>
-          </AgainDrawerScrollBody>
-        </AgainDrawerLayout>
-      </AgainDrawerPanel>
 
-      <WebsiteMenuFormDrawer
-        open={menuEditorOpen}
-        onOpenChange={(next) => {
-          setMenuEditorOpen(next);
-          if (!next) setEditingMenu(null);
-        }}
-        mode="edit"
-        menu={editingMenu}
-        nested
-        onSave={handleMenuEditorSave}
-      />
-    </>
+            {menuLoading ? (
+              <p className="py-10 text-center text-[12px] text-muted-foreground">
+                Loading menu…
+              </p>
+            ) : !menuId ? (
+              <p className="py-10 text-center text-[12px] text-muted-foreground">
+                Select a menu to edit its items.
+              </p>
+            ) : source === "auto" ? (
+              <div className="space-y-2">
+                <p className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
+                  {autoTypeLabel(autoType)} tree
+                </p>
+                <CatalogAutoMenuTree
+                  key={`${editingMenu?.id ?? "shop"}-auto-${autoType}`}
+                  items={items}
+                  onChange={setItems}
+                  autoType={autoType}
+                  newItemsHidden={!autoShowNew}
+                />
+              </div>
+            ) : (
+              <div className="space-y-2">
+                <p className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
+                  Menu items
+                </p>
+                <CustomMenuTree
+                  key={`${editingMenu?.id ?? "shop"}-custom`}
+                  items={items}
+                  onChange={setItems}
+                  pages={pageOptions}
+                  categories={categories}
+                  brands={brands}
+                />
+              </div>
+            )}
+          </div>
+        </AgainDrawerScrollBody>
+      </AgainDrawerLayout>
+    </AgainDrawerPanel>
   );
 }

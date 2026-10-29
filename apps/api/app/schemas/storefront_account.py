@@ -42,6 +42,24 @@ class LoginPinRequest(BaseModel):
     pin: str = Field(min_length=4, max_length=4)
 
 
+class RegisterPasswordRequest(BaseModel):
+    name: str = Field(min_length=1, max_length=255)
+    phone: str = Field(min_length=3, max_length=50)
+    email: Optional[str] = Field(default=None, max_length=255)
+    password: str = Field(min_length=1, max_length=128)
+
+
+class LoginPasswordRequest(BaseModel):
+    identifier: str = Field(min_length=3, max_length=255)
+    password: str = Field(min_length=1, max_length=128)
+
+
+class SetPasswordRequest(BaseModel):
+    password: str = Field(min_length=1, max_length=128)
+    confirm_password: str = Field(min_length=1, max_length=128)
+    current_password: Optional[str] = Field(default=None, max_length=128)
+
+
 class GoogleAuthConfigResponse(BaseModel):
     enabled: bool = False
     client_id: str = ""
@@ -82,6 +100,7 @@ class CustomerMeRead(BaseModel):
     total_orders: int = 0
     wallet_balance: Decimal = Decimal("0")
     has_pin: bool = False
+    has_password: bool = False
     identifier: str = ""
     identifier_type: str = ""
     assigned_staff: Optional[str] = None

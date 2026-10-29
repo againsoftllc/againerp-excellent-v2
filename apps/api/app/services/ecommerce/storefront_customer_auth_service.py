@@ -28,6 +28,9 @@ DEFAULT_OTP = "1234"
 OTP_TTL_SECONDS = 60 * 60 * 24
 SESSION_DAYS = 30
 PIN_LENGTH = 4
+PASSWORD_MIN_LENGTH = 6
+PASSWORD_MAX_FAILED = 5          # wrong passwords in a row ...
+PASSWORD_LOCK_MINUTES = 15       # ... lock sign-in for this long since the last attempt
 
 EMAIL_RE = re.compile(r"^[^\s@]+@[^\s@]+\.[^\s@]{2,}$")
 PHONE_RE = re.compile(r"^(?:\+?880)?01[3-9]\d{8}$")
@@ -248,6 +251,135 @@ class StorefrontCustomerAuthService:
         self._db.commit()
         return token, expires_at, customer, identity
 
+    # ── Password sign-in (used while OTP is switched off) ────────────────────────────────────────────
+    @staticmethod
+    def _check_password_rules(password: str) -> str:
+        pw = password or ""
+        if len(pw) < PASSWORD_MIN_LENGTH:
+            raise CustomerAuthError(f"Password must be at least {PASSWORD_MIN_LENGTH} characters")
+        if not pw.strip():
+            raise CustomerAuthError("Password cannot be only spaces")
+        return pw
+
+    def register_password(
+        self, *, name: str, phone: str, email: Optional[str], password: str
+    ) -> Tuple[str, datetime, CommerceCustomer, StorefrontCustomerIdentity]:
+        phone_id = normalize_identifier(phone)
+        if phone_id.identifier_type != "phone":
+            raise CustomerAuthError("Enter a valid mobile number (01XXXXXXXXX)")
+        clean_name = " ".join((name or "").split()).strip()
+        if not clean_name:
+            raise CustomerAuthError("Enter your name")
+        pw = self._check_password_rules(password)
+
+        email_id: Optional[NormalizedIdentifier] = None
+        if email and email.strip():
+            email_id = normalize_identifier(email)
+            if email_id.identifier_type != "email":
+                raise CustomerAuthError("Enter a valid email address")
+
+        for ident, label in ((phone_id, "mobile number"), (email_id, "email")):
+            if ident is None:
+                continue
+            taken = (
+                self._db.query(StorefrontCustomerIdentity)
+                .filter(StorefrontCustomerIdentity.identifier == ident.identifier)
+                .first()
+            )
+            if taken:
+                raise CustomerAuthError(f"An account with this {label} already exists. Please log in.", status_code=409)
+
+        # No phone check happens here (that is what OTP is for), so a new customer record is always made;
+        # an older guest-checkout record with the same phone is deliberately not attached to this account.
+        customer = self._create_customer(phone_id, display_name=clean_name, source="storefront password sign-up")
+        if email_id:
+            customer.email = email_id.identifier
+        hashed = hash_password(pw)
+        identity = StorefrontCustomerIdentity(
+            customer_id=customer.id,
+            identifier=phone_id.identifier,
+            identifier_type="phone",
+            display_identifier=phone_id.display,
+            password_hash=hashed,
+            is_active=True,
+        )
+        self._db.add(identity)
+        if email_id:
+            self._db.add(
+                StorefrontCustomerIdentity(
+                    customer_id=customer.id,
+                    identifier=email_id.identifier,
+                    identifier_type="email",
+                    display_identifier=email_id.display,
+                    password_hash=hashed,
+                    is_active=True,
+                )
+            )
+        self._db.flush()
+        token, expires_at = self._issue_session(identity, customer)
+        self._db.commit()
+        return token, expires_at, customer, identity
+
+    def login_password(
+        self, raw_identifier: str, password: str
+    ) -> Tuple[str, datetime, CommerceCustomer, StorefrontCustomerIdentity]:
+        normalized = normalize_identifier(raw_identifier)
+        wrong = CustomerAuthError("Wrong phone/email or password", status_code=401)
+        identity = (
+            self._db.query(StorefrontCustomerIdentity)
+            .filter(StorefrontCustomerIdentity.identifier == normalized.identifier)
+            .first()
+        )
+        if not identity:
+            raise wrong
+        if not identity.is_active:
+            raise CustomerAuthError("Account is inactive", status_code=403)
+        if not identity.password_hash:
+            raise CustomerAuthError(
+                "This account has no password yet. Please contact us to set one.", status_code=400
+            )
+        if (
+            (identity.failed_password_attempts or 0) >= PASSWORD_MAX_FAILED
+            and identity.updated_at
+            and identity.updated_at > datetime.utcnow() - timedelta(minutes=PASSWORD_LOCK_MINUTES)
+        ):
+            raise CustomerAuthError(
+                f"Too many wrong attempts. Try again in {PASSWORD_LOCK_MINUTES} minutes.", status_code=429
+            )
+        if not verify_password(password or "", identity.password_hash):
+            identity.failed_password_attempts = (identity.failed_password_attempts or 0) + 1
+            self._db.commit()
+            raise wrong
+
+        identity.failed_password_attempts = 0
+        customer = self._db.get(CommerceCustomer, identity.customer_id)
+        if not customer or customer.status in LOGIN_BLOCKED_STATUSES:
+            raise CustomerAuthError("Customer account is not available", status_code=403)
+        token, expires_at = self._issue_session(identity, customer)
+        self._db.commit()
+        return token, expires_at, customer, identity
+
+    def set_password(
+        self,
+        identity: StorefrontCustomerIdentity,
+        password: str,
+        confirm_password: str,
+        current_password: Optional[str] = None,
+    ) -> None:
+        pw = self._check_password_rules(password)
+        if pw != confirm_password:
+            raise CustomerAuthError("Passwords do not match")
+        if identity.password_hash and not verify_password(current_password or "", identity.password_hash):
+            raise CustomerAuthError("Your current password is not right", status_code=401)
+        hashed = hash_password(pw)
+        # the phone and email identities of one customer share the password
+        for row in self._db.query(StorefrontCustomerIdentity).filter(
+            StorefrontCustomerIdentity.customer_id == identity.customer_id
+        ):
+            row.password_hash = hashed
+            row.failed_password_attempts = 0
+        self._db.commit()
+
     def set_pin(self, identity: StorefrontCustomerIdentity, pin: str, confirm_pin: str) -> None:
         if pin != confirm_pin:
             raise CustomerAuthError("PINs do not match")
@@ -374,6 +506,7 @@ class StorefrontCustomerAuthService:
         normalized: NormalizedIdentifier,
         *,
         display_name: Optional[str] = None,
+        source: str = "storefront OTP",
     ) -> CommerceCustomer:
         cleaned_name = " ".join((display_name or "").split()).strip()
         if normalized.identifier_type == "email":
@@ -390,6 +523,7 @@ class StorefrontCustomerAuthService:
             code = f"SF-{new_session_token()[:8].upper()}"
 
         row = CommerceCustomer(
+            id=str(uuid.uuid4()),
             company_id=DEFAULT_COMPANY_ID,
             customer_code=code,
             name=name,
@@ -407,7 +541,7 @@ class StorefrontCustomerAuthService:
                     {
                         "id": f"tl_{uuid.uuid4().hex[:8]}",
                         "type": "status_change",
-                        "title": "Registered via storefront OTP",
+                        "title": f"Registered via {source}",
                         "actor": "Storefront",
                         "actorInitials": "SF",
                         "at": datetime.utcnow().isoformat() + "Z",
@@ -415,6 +549,10 @@ class StorefrontCustomerAuthService:
                 ]
             ),
         )
+        # party_id is NOT NULL in this schema: link / create the customer's Party before the first insert
+        from app.services.parties.commerce_party_bridge import ensure_party_for_customer
+
+        ensure_party_for_customer(self._db, row)
         self._db.add(row)
         self._db.flush()
         return row
@@ -438,6 +576,7 @@ class StorefrontCustomerAuthService:
             "total_orders": customer.total_orders or 0,
             "wallet_balance": customer.wallet_balance,
             "has_pin": bool(identity.pin_hash),
+            "has_password": bool(identity.password_hash),
             "identifier": identity.display_identifier or identity.identifier,
             "identifier_type": identity.identifier_type,
             "assigned_staff": customer.assigned_staff,

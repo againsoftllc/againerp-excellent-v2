@@ -116,6 +116,15 @@ export function getStorefrontBaseUrl(): string {
   const siteProduction = sanitizeStorefrontBase(cachedSiteProductionUrl);
 
   if (isLocalAdminHost()) {
+    // This stack's own storefront (env) first: the saved site URLs can still point at another local stack,
+    // which breaks every storefront image preview in the drawers.
+    if (configured) {
+      try {
+        if (isLoopbackHost(new URL(configured).hostname)) return configured;
+      } catch {
+        /* ignore */
+      }
+    }
     if (connected) {
       try {
         if (isLoopbackHost(new URL(connected).hostname)) return connected;
@@ -200,7 +209,51 @@ export const LIVE_EDIT_MSG = {
   categoryReload: "category-page:reload",
   contentPreview: "content-page:preview",
   contentReload: "content-page:reload",
+  /** Storefront (host) → embed panel: hand off the site-editor session. */
+  auth: "live-edit:auth",
+  /** Embed panel → storefront (host): user closed the editor panel. */
+  close: "live-edit:close",
 } as const;
+
+export type LiveEditAuthMessage = {
+  type: typeof LIVE_EDIT_MSG.auth;
+  token: string;
+  user: {
+    id: string;
+    email: string;
+    username: string;
+    name: string;
+    role: string;
+    is_active: boolean;
+  };
+  expiresAt: string;
+};
+
+export function isLiveEditAuthMessage(data: unknown): data is LiveEditAuthMessage {
+  if (!data || typeof data !== "object") return false;
+  const msg = data as Record<string, unknown>;
+  return msg.type === LIVE_EDIT_MSG.auth && typeof msg.token === "string";
+}
+
+/** Storefront origins allowed to embed the chrome-less live-edit panel (env first, then both loopback spellings). */
+export function storefrontEmbedOrigins(): string[] {
+  const out = new Set<string>();
+  const fromEnv = process.env.NEXT_PUBLIC_STOREFRONT_URL?.trim().replace(/\/$/, "");
+  const add = (url: string) => {
+    try {
+      const u = new URL(url);
+      out.add(u.origin);
+      const alt = u.hostname === "localhost" ? "127.0.0.1" : u.hostname === "127.0.0.1" ? "localhost" : "";
+      if (alt) out.add(`${u.protocol}//${alt}${u.port ? `:${u.port}` : ""}`);
+    } catch {
+      /* ignore */
+    }
+  };
+  if (fromEnv) add(fromEnv);
+  add("http://localhost:3008");
+  add("http://localhost:3010");
+  return [...out];
+}
 
 export type LiveEditSelectMessage = {
   type: typeof LIVE_EDIT_MSG.select;

@@ -18,7 +18,6 @@ import {
 import { CSS } from "@dnd-kit/utilities";
 import {
   ChevronDown,
-  ChevronsRight,
   Copy,
   Eye,
   EyeOff,
@@ -37,6 +36,7 @@ import {
   AGAIN_DRAWER_MODULE_LABEL_CLASS,
   AGAIN_DRAWER_RECORD_LABEL_CLASS,
 } from "@/components/again/again-drawer";
+import { LiveEditDrawerBackButton } from "@/components/website/live-edit/live-edit-drawer-back-button";
 import { LiveEditDrawerSaveButton } from "@/components/website/live-edit/live-edit-drawer-save-button";
 import { AgainFormRow, AgainUnderlineInput } from "@/components/again/again-form-sheet";
 import { FieldHelpTip } from "@/components/sales/field-help-tip";
@@ -67,6 +67,8 @@ import { defaultFeaturedSection, defaultFeaturedTab } from "@/lib/website/websit
 
 type Props = {
   open: boolean;
+  /** Return to the Sections list (falls back to closing the drawer). */
+  onBack?: () => void;
   onOpenChange: (open: boolean) => void;
   content: HomepageContent;
   onChange?: (content: HomepageContent) => void;
@@ -89,7 +91,7 @@ function productThumb(url: string | undefined): string {
   return url;
 }
 
-function ProductMultiPicker({
+export function ProductMultiPicker({
   selectedIds,
   disabled,
   onChange,
@@ -485,7 +487,7 @@ function SortableTabRow({
   );
 }
 
-export function LiveEditFeaturedDrawer({ open, onOpenChange, content, onChange, onSave, saving = false }: Props) {
+export function LiveEditFeaturedDrawer({ onBack, open, onOpenChange, content, onChange, onSave, saving = false }: Props) {
   const titleId = useId();
   const [section, setSection] = useState<FeaturedProductsSection>(
     content.featured ?? defaultFeaturedSection(),
@@ -597,15 +599,7 @@ export function LiveEditFeaturedDrawer({ open, onOpenChange, content, onChange, 
         <AgainDrawerControlBar
             trailing={<LiveEditDrawerSaveButton onSave={onSave} saving={saving} />}
           >
-          <button
-            type="button"
-            className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-md text-muted-foreground hover:bg-muted hover:text-foreground"
-            aria-label="Close drawer"
-            title="Close"
-            onClick={() => onOpenChange(false)}
-          >
-            <ChevronsRight className="h-4 w-4" />
-          </button>
+          <LiveEditDrawerBackButton onBack={() => (onBack ? onBack() : onOpenChange(false))} />
           <span className={AGAIN_DRAWER_MODULE_LABEL_CLASS}>Website</span>
           <span className="text-muted-foreground">/</span>
           <span className={AGAIN_DRAWER_RECORD_LABEL_CLASS} id={titleId}>

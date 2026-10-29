@@ -14,6 +14,8 @@ import {
 
 type SingleProps = {
   multiple?: false;
+  /** Show a radio mark in front of each row (single pick). */
+  radio?: boolean;
   categories: Category[];
   value: string;
   onChange: (id: string, name: string) => void;
@@ -72,6 +74,7 @@ export function CategoryCombobox(props: Props) {
     listFilter = false,
     menuFontSize,
   } = props;
+  const radio = !multiple && Boolean((props as SingleProps).radio);
 
   const [open, setOpen] = useState(autoOpen);
   const [search, setSearch] = useState("");
@@ -417,6 +420,13 @@ export function CategoryCombobox(props: Props) {
                         >
                           {isSelected ? "✓" : ""}
                         </span>
+                      ) : radio ? (
+                      <span
+                        className={cn("flex h-3.5 w-3.5 shrink-0 items-center justify-center rounded-full border border-border", isSelected && "border-[#00a09d]")}
+                        aria-hidden
+                      >
+                        {isSelected ? <span className="h-1.5 w-1.5 rounded-full bg-[#00a09d]" /> : null}
+                      </span>
                       ) : null}
                       <span className="truncate">{node.name}</span>
                     </button>
@@ -503,6 +513,13 @@ export function CategoryCombobox(props: Props) {
                             >
                               {isSelected ? "✓" : ""}
                             </span>
+                          ) : radio ? (
+                          <span
+                            className={cn("flex h-3.5 w-3.5 shrink-0 items-center justify-center rounded-full border border-border", isSelected && "border-[#00a09d]")}
+                            aria-hidden
+                          >
+                            {isSelected ? <span className="h-1.5 w-1.5 rounded-full bg-[#00a09d]" /> : null}
+                          </span>
                           ) : null}
                           <span className="truncate">{node.name}</span>
                         </button>

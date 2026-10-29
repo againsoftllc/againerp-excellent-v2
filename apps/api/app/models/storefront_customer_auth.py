@@ -28,6 +28,9 @@ class StorefrontCustomerIdentity(Base):
     verified_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
     pin_hash: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
     failed_pin_attempts: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    # Password sign-in (used while OTP is switched off); same PBKDF2 hash as the PIN.
+    password_hash: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    failed_password_attempts: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(

@@ -6,6 +6,31 @@ export const HOME_LIVE_EDIT = "/website/live-edit/home";
 export const CATEGORY_LIVE_EDIT = "/website/live-edit/category";
 export const CONTENT_LIVE_EDIT = "/website/live-edit/content";
 
+/** Sample category used when a menu row has no usable path. */
+export const DEFAULT_CATEGORY_PREVIEW_PATH = "/laptops";
+
+/** Menu href / CMS url / slug → category path on the storefront ("/category/laptops" → "/laptops"). */
+export function normalizeCategoryStorefrontPath(raw: string | null | undefined): string {
+  const value = (raw || "").trim();
+  if (!value) return DEFAULT_CATEGORY_PREVIEW_PATH;
+  let path = value.startsWith("/") ? value : `/${value}`;
+  if (path.startsWith("/category/")) {
+    const slug = path.slice("/category/".length).split("/")[0];
+    path = slug ? `/${slug}` : DEFAULT_CATEGORY_PREVIEW_PATH;
+  }
+  if (path === "/" || path === "/category") return DEFAULT_CATEGORY_PREVIEW_PATH;
+  return path;
+}
+
+/**
+ * Where a menu row's category opens. Excellent's storefront has no category Live Edit
+ * (the homepage one is the only editor), so this is the category's own page on the site.
+ */
+export function categoryLiveEditUrl(hrefOrSlug: string | null | undefined): string {
+  const base = getStorefrontBaseUrl().replace(/\/$/, "");
+  return `${base}${normalizeCategoryStorefrontPath(hrefOrSlug)}`;
+}
+
 /** Working homepage Live Edit (storefront :3010) — same as website login flow. */
 export function storefrontHomepageLiveEditUrl(): string {
   const base = getStorefrontBaseUrl().replace(/\/$/, "") || "http://localhost:3010";

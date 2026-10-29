@@ -24,6 +24,7 @@ import {
   FileText,
   FolderOpen,
   GripVertical,
+  MousePointerClick,
   Plus,
   Tag,
   Trash2,
@@ -38,8 +39,14 @@ import {
   useCatalogCategories,
 } from "@/lib/api/use-catalog-categories";
 import { cn } from "@/lib/utils";
+import { categoryLiveEditUrl } from "@/lib/website/pages/page-actions";
 import type { MenuAutoType, WebsiteMenuItem } from "@/lib/website/website-menus";
 import { autoTypeLabel } from "@/lib/website/website-menus";
+
+/** Category rows can be opened on the site; other link types have no page to open. */
+function canLiveEditItem(item: WebsiteMenuItem) {
+  return item.linkType === "category" && Boolean(item.href.trim());
+}
 
 function isSyncedAutoItem(item: WebsiteMenuItem, autoType: MenuAutoType) {
   return item.linkType === autoType && Boolean(item.linkRefId);
@@ -241,6 +248,20 @@ function SortableTreeRow({
           />
         )}
 
+        {canLiveEditItem(item) ? (
+          <button
+            type="button"
+            className="inline-flex h-6 w-6 shrink-0 items-center justify-center rounded text-muted-foreground hover:bg-muted hover:text-[#00a09d]"
+            aria-label={`Open ${item.label} on the site`}
+            title={`Open ${item.href} on the site`}
+            onClick={() => window.open(categoryLiveEditUrl(item.href), "_blank")}
+          >
+            <MousePointerClick className="h-3.5 w-3.5" />
+          </button>
+        ) : (
+          <span className="inline-flex h-6 w-6 shrink-0" />
+        )}
+
         <button
           type="button"
           className="inline-flex h-6 w-6 shrink-0 items-center justify-center rounded text-muted-foreground hover:bg-muted hover:text-foreground"
@@ -330,10 +351,34 @@ export function CatalogAutoMenuTree({
     });
   }, [items]);
 
+  const visibleRoots = items.filter((i) => !i.hidden);
+  const hiddenRoots = items.filter((i) => i.hidden);
+
   const handleDragEnd = (event: DragEndEvent) => {
     const { active, over } = event;
     if (!over || active.id === over.id) return;
-    onChange(reorderSiblings(items, String(active.id), String(over.id)));
+    const activeId = String(active.id);
+    const overId = String(over.id);
+
+    const visibleIds = visibleRoots.map((i) => i.id);
+    if (visibleIds.includes(activeId) && visibleIds.includes(overId)) {
+      onChange([
+        ...arrayMove(visibleRoots, visibleIds.indexOf(activeId), visibleIds.indexOf(overId)),
+        ...hiddenRoots,
+      ]);
+      return;
+    }
+
+    const hiddenIds = hiddenRoots.map((i) => i.id);
+    if (hiddenIds.includes(activeId) && hiddenIds.includes(overId)) {
+      onChange([
+        ...visibleRoots,
+        ...arrayMove(hiddenRoots, hiddenIds.indexOf(activeId), hiddenIds.indexOf(overId)),
+      ]);
+      return;
+    }
+
+    onChange(reorderSiblings(items, activeId, overId));
   };
 
   const openAddCategory = (menuParent: WebsiteMenuItem | null) => {
@@ -412,25 +457,51 @@ export function CatalogAutoMenuTree({
     <>
       <div className="space-y-1.5">
         <p className="text-[11px] text-muted-foreground">
-          Drag to reorder · eye to hide
+          Drag to reorder · eye to hide (hidden = off storefront Shop + hamburger drawer)
           {canAddCategory
-            ? " · Add category opens the category form · new categories sync in"
+            ? " · cursor icon opens that category page on the site · Add category opens the category form · new categories sync in"
             : canAddBrand
               ? " · Add brand opens the brand form · new brands sync in"
               : ` · new ${entityLabel}s sync in automatically`}
           .
         </p>
         {items.length === 0 ? (
-          <p className="rounded-md border border-dashed border-border px-3 py-5 text-center text-[12px] text-muted-foreground">
+          <p className="rounded-none border border-dashed border-border px-3 py-5 text-center text-[12px] text-muted-foreground">
             No {entityLabel}s yet
             {canAddEntity
               ? " — add one below, or create them in Catalog."
               : " — create them in Website → Pages."}
           </p>
         ) : null}
-        <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
-          {renderLevel(items, false)}
-        </DndContext>
+
+        {visibleRoots.length > 0 ? (
+          <div className="space-y-1 rounded-none border border-border bg-background p-2">
+            <p className="px-1 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
+              On storefront ({visibleRoots.length}) — same as hamburger drawer
+            </p>
+            <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
+              {renderLevel(visibleRoots, false)}
+            </DndContext>
+          </div>
+        ) : items.length > 0 ? (
+          <p className="rounded-none border border-dashed border-border px-3 py-4 text-center text-[12px] text-muted-foreground">
+            Nothing visible on storefront yet — open the eye on a category below.
+          </p>
+        ) : null}
+
+        {hiddenRoots.length > 0 ? (
+          <details className="rounded-none border border-border bg-muted/30 p-2">
+            <summary className="cursor-pointer px-1 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
+              Hidden from storefront ({hiddenRoots.length})
+            </summary>
+            <div className="mt-1.5">
+              <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
+                {renderLevel(hiddenRoots, false)}
+              </DndContext>
+            </div>
+          </details>
+        ) : null}
+
         {canAddCategory ? (
           <AddEntityButton label="Add category" onClick={() => openAddCategory(null)} />
         ) : null}
@@ -442,7 +513,7 @@ export function CatalogAutoMenuTree({
           open={addCategoryOpen}
           onOpenChange={setAddCategoryOpen}
           mode="create"
-          categories={categories}
+          parentOptions={categories.map((c) => ({ id: c.id, label: c.name }))}
           defaultParentId={addTarget.catalogParentId}
           onSave={async (data) => {
             try {
@@ -452,7 +523,6 @@ export function CatalogAutoMenuTree({
                 slug: data.slug ?? "",
                 parentId: data.parentId ?? null,
                 active: data.active ?? true,
-                status: data.status,
                 showInTopMenu: data.showInTopMenu ?? false,
                 description: data.description,
                 metaTitle: data.metaTitle,
@@ -491,7 +561,6 @@ export function CatalogAutoMenuTree({
                 name: data.name ?? "",
                 slug: data.slug ?? "",
                 active: data.active ?? true,
-                status: data.status,
                 description: data.description,
                 websiteUrl: data.websiteUrl,
                 metaTitle: data.metaTitle,
