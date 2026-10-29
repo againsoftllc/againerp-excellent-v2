@@ -206,18 +206,21 @@ class StorefrontCatalogService:
                 cleaned = [v.strip() for v in values if v and v.strip()]
                 if not cleaned:
                     continue
-                attr = (
-                    self._db.query(CatalogAttribute)
+                # one filter code can belong to several profiles (Mouse / Keyboard / Wi-Fi all have "Connection"):
+                # match the value on every filterable attribute of that code, not an arbitrary first one
+                attr_ids = [
+                    a.id
+                    for a in self._db.query(CatalogAttribute)
                     .filter(CatalogAttribute.code == code, CatalogAttribute.is_filterable.is_(True))
-                    .first()
-                )
-                if not attr:
+                    .all()
+                ]
+                if not attr_ids:
                     query = query.filter(EcommerceItem.catalog_product_id == "__none__")
                     continue
                 matching_ids = {
                     row.product_id
                     for row in self._db.query(CatalogProductAttributeValue)
-                    .filter(CatalogProductAttributeValue.attribute_id == attr.id)
+                    .filter(CatalogProductAttributeValue.attribute_id.in_(attr_ids))
                     .all()
                     if self._value_matches_options(row.value or "", cleaned)
                 }
