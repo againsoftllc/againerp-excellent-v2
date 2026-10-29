@@ -208,21 +208,23 @@ class StorefrontCatalogService:
                     continue
                 # one filter code can belong to several profiles (Mouse / Keyboard / Wi-Fi all have "Connection"):
                 # match the value on every filterable attribute of that code, not an arbitrary first one
-                attr_ids = [
-                    a.id
+                attrs_by_id = {
+                    a.id: a
                     for a in self._db.query(CatalogAttribute)
                     .filter(CatalogAttribute.code == code, CatalogAttribute.is_filterable.is_(True))
                     .all()
-                ]
-                if not attr_ids:
+                }
+                if not attrs_by_id:
                     query = query.filter(EcommerceItem.catalog_product_id == "__none__")
                     continue
                 matching_ids = {
                     row.product_id
                     for row in self._db.query(CatalogProductAttributeValue)
-                    .filter(CatalogProductAttributeValue.attribute_id.in_(attr_ids))
+                    .filter(CatalogProductAttributeValue.attribute_id.in_(list(attrs_by_id)))
                     .all()
-                    if self._value_matches_options(row.value or "", cleaned)
+                    if self._value_matches_options(
+                        row.value or "", cleaned, multi=attrs_by_id[row.attribute_id].field_type == "multi_select"
+                    )
                 }
                 query = query.filter(
                     EcommerceItem.catalog_product_id.in_(matching_ids or ["__none__"]),
@@ -230,9 +232,11 @@ class StorefrontCatalogService:
         return query
 
     @staticmethod
-    def _value_matches_options(stored: str, options: List[str]) -> bool:
+    def _value_matches_options(stored: str, options: List[str], multi: bool = True) -> bool:
         if stored in options:
             return True
+        if not multi:
+            return False  # single-select: the whole value is the option ("USB" must not match "USB, Wi-Fi & LAN")
         parts = [p.strip() for p in stored.split(",") if p.strip()]
         return any(opt in parts for opt in options)
 
@@ -819,7 +823,12 @@ class StorefrontCatalogService:
                     raw = (row.value or "").strip()
                     if not raw:
                         continue
-                    parts = [p.strip() for p in raw.split(",") if p.strip()] or [raw]
+                    # only multi-select values are comma lists; a single-select value like "Print, Scan & Copy" is one option
+                    parts = (
+                        ([p.strip() for p in raw.split(",") if p.strip()] or [raw])
+                        if attr.field_type == "multi_select"
+                        else [raw]
+                    )
                     for part in parts:
                         seen.setdefault(part, set()).add(row.product_id)
 
