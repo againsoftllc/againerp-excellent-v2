@@ -61,7 +61,9 @@ export function useCatalogBrands(options: UseCatalogBrandsOptions = {}): UseCata
           key,
           async () => {
             const params = new URLSearchParams();
-            if (channel) params.set("channel", channel);
+            // Brands from an older import still carry the dropshipping tag, so the catalog list takes every brand
+            // (filtering on "catalog" showed only the few made by hand). Dropshipping keeps its own filter.
+            if (channel && channel !== "catalog") params.set("channel", channel);
             const qs = params.toString();
             const res = await apiFetch<ApiBrandListResponse>(
               qs ? `/api/v1/catalog/brands?${qs}` : "/api/v1/catalog/brands",
