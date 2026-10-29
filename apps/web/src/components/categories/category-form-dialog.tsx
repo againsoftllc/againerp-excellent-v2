@@ -182,7 +182,7 @@ export function CategoryFormDialog({
         resizable
         resizeMaxWidth={900}
         closeButton="none"
-        className="w-full max-w-[100vw] gap-0 overflow-hidden rounded-none border-l border-input bg-background p-0 sm:w-[min(100%,36rem)] sm:min-w-[320px] sm:max-w-[900px]"
+        className="z-[270] w-full max-w-[100vw] gap-0 overflow-hidden rounded-none border-l border-input bg-background p-0 sm:w-[min(100%,36rem)] sm:min-w-[320px] sm:max-w-[900px]"
         aria-describedby={undefined}
       >
         <div className="flex h-full min-h-0 flex-col">

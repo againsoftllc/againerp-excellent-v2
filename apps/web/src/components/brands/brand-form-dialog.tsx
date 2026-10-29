@@ -212,6 +212,8 @@ export function BrandFormDialog({ open, onOpenChange, mode = "create", brand, on
       defaultWidth={560}
       minWidth={380}
       widthStorageKey="again-brand-drawer-width"
+      // Opened from the brand list drawer (z-260): sit above it instead of behind it.
+      contentClassName="z-[270]"
       onPointerDownOutside={saveDraftIfDirty}
       onInteractOutside={saveDraftIfDirty}
       onEscapeKeyDown={saveDraftIfDirty}
