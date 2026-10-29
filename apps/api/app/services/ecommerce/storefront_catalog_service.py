@@ -992,21 +992,16 @@ class StorefrontCatalogService:
     def list_brands(self) -> List[dict]:
         """Active brands for storefront brand strip / nav.
 
-        Prefer the Catalog channel (storefront). Fall back to dropshipping
-        leftovers only when no catalog brands are active.
+        Every active brand, whatever its channel. Brands from an older import carry the
+        dropshipping tag; preferring the catalog channel made the list collapse to a single
+        brand as soon as one brand was created in the catalog.
         """
-        def fetch(channel: str):
-            return (
-                self._db.query(CatalogBrand)
-                .filter(
-                    CatalogBrand.is_active.is_(True),
-                    CatalogBrand.channel == channel,
-                )
-                .order_by(CatalogBrand.sort_order.asc(), CatalogBrand.name.asc())
-                .all()
-            )
-
-        rows = fetch("catalog") or fetch("dropshipping")
+        rows = (
+            self._db.query(CatalogBrand)
+            .filter(CatalogBrand.is_active.is_(True))
+            .order_by(CatalogBrand.sort_order.asc(), CatalogBrand.name.asc())
+            .all()
+        )
         return [
             {
                 "id": row.id,
