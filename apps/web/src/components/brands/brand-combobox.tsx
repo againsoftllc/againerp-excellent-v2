@@ -10,11 +10,13 @@ type Props = {
   value: string;
   onChange: (id: string, name: string) => void;
   onList?: () => void;
+  /** Opens the create drawer (the + button). */
+  onAdd?: () => void;
   placeholder?: string;
   className?: string;
 };
 
-export function BrandCombobox({ brands, value, onChange, onList, placeholder = "Select brand", className }: Props) {
+export function BrandCombobox({ brands, value, onChange, onList, onAdd, placeholder = "Select brand", className }: Props) {
   const [open, setOpen] = useState(false);
   const [search, setSearch] = useState("");
   const containerRef = useRef<HTMLDivElement>(null);
@@ -63,6 +65,21 @@ export function BrandCombobox({ brands, value, onChange, onList, placeholder = "
               className="inline-flex h-4 w-4 items-center justify-center rounded-none hover:bg-muted"
             >
               <X className="h-3 w-3" />
+            </span>
+          )}
+          {onAdd && (
+            <span
+              role="button"
+              tabIndex={0}
+              onClick={(e) => {
+                e.stopPropagation();
+                onAdd();
+              }}
+              onKeyDown={(e) => e.key === "Enter" && (e.stopPropagation(), onAdd())}
+              className="inline-flex h-4 w-4 items-center justify-center rounded-none bg-muted text-[11px] font-medium leading-none text-muted-foreground hover:bg-muted/80 hover:text-foreground"
+              title="Add brand"
+            >
+              +
             </span>
           )}
           {onList && (

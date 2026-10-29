@@ -20,6 +20,8 @@ type SingleProps = {
   value: string;
   onChange: (id: string, name: string) => void;
   onList?: () => void;
+  /** Opens the create drawer (the + button). */
+  onAdd?: () => void;
   placeholder?: string;
   className?: string;
   /** Open the list as soon as it mounts (a grid cell editor). */
@@ -40,6 +42,8 @@ type MultiProps = {
   values: string[];
   onChange: (ids: string[]) => void;
   onList?: () => void;
+  /** Opens the create drawer (the + button). */
+  onAdd?: () => void;
   placeholder?: string;
   className?: string;
   autoOpen?: boolean;
@@ -61,10 +65,22 @@ function collectAncestorIds(id: string, items: Category[]): string[] {
   return ids;
 }
 
+/** Full breadcrumb for a category, e.g. "Monitor › Eurovision" (a chip only has room for the leaf name, so the path goes in its tooltip). */
+function categoryPath(id: string, items: Category[]): string {
+  const cat = items.find((c) => c.id === id);
+  if (!cat) return "";
+  const ancestors = collectAncestorIds(id, items)
+    .map((parentId) => items.find((c) => c.id === parentId)?.name)
+    .filter((name): name is string => Boolean(name))
+    .reverse();
+  return [...ancestors, cat.name].join(" › ");
+}
+
 export function CategoryCombobox(props: Props) {
   const {
     categories,
     onList,
+    onAdd,
     placeholder = "Select category",
     className,
     multiple = false,
@@ -304,6 +320,8 @@ export function CategoryCombobox(props: Props) {
         ref={triggerRef}
         type="button"
         onClick={() => setOpen((o) => !o)}
+        // "2 selected" says nothing about which two: list the full paths on hover.
+        title={selected.length ? selected.map((cat) => categoryPath(cat.id, categories)).join("\n") : undefined}
         className={cn(
           "flex h-8 w-full items-center gap-2 rounded-none border border-input bg-background px-2.5 py-1 text-xs shadow-sm hover:bg-accent/30",
           selected.length === 0 && "text-muted-foreground",
@@ -321,6 +339,21 @@ export function CategoryCombobox(props: Props) {
               className="inline-flex h-4 w-4 items-center justify-center rounded-none hover:bg-muted"
             >
               <X className="h-3 w-3" />
+            </span>
+          )}
+          {onAdd && (
+            <span
+              role="button"
+              tabIndex={0}
+              onClick={(e) => {
+                e.stopPropagation();
+                onAdd();
+              }}
+              onKeyDown={(e) => e.key === "Enter" && (e.stopPropagation(), onAdd())}
+              className="inline-flex h-4 w-4 items-center justify-center rounded-none bg-muted text-[11px] font-medium leading-none text-muted-foreground hover:bg-muted/80 hover:text-foreground"
+              title="Add category"
+            >
+              +
             </span>
           )}
           {onList && (
@@ -346,6 +379,7 @@ export function CategoryCombobox(props: Props) {
           {selected.map((cat) => (
             <span
               key={cat.id}
+              title={categoryPath(cat.id, categories)}
               className="inline-flex max-w-full items-center gap-0.5 border border-border/70 bg-muted/30 px-1 py-px text-[9px] leading-none text-foreground"
             >
               <span className="truncate">{cat.name}</span>

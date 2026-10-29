@@ -9,6 +9,8 @@ type Props = {
   value: string;
   onChange: (value: string) => void;
   onList?: () => void;
+  /** Opens the create drawer (the + button). */
+  onAdd?: () => void;
   placeholder?: string;
   className?: string;
 };
@@ -18,6 +20,7 @@ export function WarrantyCombobox({
   value,
   onChange,
   onList,
+  onAdd,
   placeholder = "Select warranty",
   className,
 }: Props) {
@@ -78,6 +81,21 @@ export function WarrantyCombobox({
               <X className="h-3 w-3" />
             </span>
           ) : null}
+          {onAdd && (
+            <span
+              role="button"
+              tabIndex={0}
+              onClick={(e) => {
+                e.stopPropagation();
+                onAdd();
+              }}
+              onKeyDown={(e) => e.key === "Enter" && (e.stopPropagation(), onAdd())}
+              className="inline-flex h-4 w-4 items-center justify-center rounded-none bg-muted text-[11px] font-medium leading-none text-muted-foreground hover:bg-muted/80 hover:text-foreground"
+              title="Add warranty"
+            >
+              +
+            </span>
+          )}
           {onList ? (
             <span
               role="button"

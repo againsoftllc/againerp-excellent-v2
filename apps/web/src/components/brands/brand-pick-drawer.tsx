@@ -14,6 +14,8 @@ type Props = {
   onSelect: (id: string, name: string) => void;
   onCreate?: (name: string) => Promise<void> | void;
   onRename?: (brand: Brand, name: string) => Promise<void> | void;
+  /** Open the full edit drawer for a brand (replaces the inline rename). */
+  onEdit?: (brand: Brand) => void;
   onDelete?: (brand: Brand) => Promise<void> | void;
 };
 
@@ -25,6 +27,7 @@ export function BrandPickDrawer({
   onSelect,
   onCreate,
   onRename,
+  onEdit,
   onDelete,
 }: Props) {
   const [search, setSearch] = useState("");
@@ -207,13 +210,14 @@ export function BrandPickDrawer({
                           onClick={() => onSelect(brand.id, brand.name)}
                           onDoubleClick={(e) => {
                             e.preventDefault();
-                            if (onRename) startEdit(brand);
+                            if (onEdit) onEdit(brand);
+                            else if (onRename) startEdit(brand);
                           }}
                         >
                           <span className="truncate">{brand.name}</span>
                         </button>
                       )}
-                      {onRename && !searching && !isEditing ? (
+                      {(onEdit || onRename) && !searching && !isEditing ? (
                         <button
                           type="button"
                           className="inline-flex h-4 w-4 shrink-0 items-center justify-center rounded-none text-muted-foreground hover:bg-muted hover:text-foreground"
@@ -221,7 +225,8 @@ export function BrandPickDrawer({
                           title="Edit brand"
                           onClick={(e) => {
                             e.stopPropagation();
-                            startEdit(brand);
+                            if (onEdit) onEdit(brand);
+                            else startEdit(brand);
                           }}
                         >
                           <Pencil className="h-3 w-3" />

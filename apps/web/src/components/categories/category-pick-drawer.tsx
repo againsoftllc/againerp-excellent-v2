@@ -22,6 +22,8 @@ type Props = {
   /** Inline create under a category. Drawer stays open. */
   onCreate?: (parentId: string | null, name: string) => Promise<void> | void;
   onRename?: (node: CategoryNode, name: string) => Promise<void> | void;
+  /** Open the full edit drawer for a category (replaces the inline rename). */
+  onEdit?: (node: CategoryNode) => void;
   onDelete?: (node: CategoryNode) => Promise<void> | void;
 };
 
@@ -319,6 +321,7 @@ export function CategoryPickDrawer({
   onSelect,
   onCreate,
   onRename,
+  onEdit,
   onDelete,
 }: Props) {
   const [search, setSearch] = useState("");
@@ -540,7 +543,7 @@ export function CategoryPickDrawer({
                     if (!multiple) onOpenChange(false);
                   }}
                   onStartAdd={onCreate ? startAdd : undefined}
-                  onStartEdit={onRename ? startEdit : undefined}
+                  onStartEdit={onEdit ?? (onRename ? startEdit : undefined)}
                   onDelete={
                     onDelete
                       ? (node) => {

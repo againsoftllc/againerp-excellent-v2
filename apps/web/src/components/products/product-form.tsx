@@ -57,6 +57,7 @@ import {
   renameCustomOrigin,
 } from "@/lib/products/origin-options";
 import type { Category } from "@/lib/mock-data/categories";
+import type { Brand } from "@/lib/mock-data/brands";
 import { useCatalogMedia, uploadCatalogMediaFiles, createCatalogMediaBatch } from "@/lib/api/use-catalog-media";
 import { slugHasError, validateSlug } from "@/lib/url-slug/validate-slug";
 import { PRODUCT_FIELD_LIMITS, truncateToLimit } from "@/lib/catalog/product-field-limits";
@@ -382,6 +383,8 @@ export function ProductForm({
     channel: categoryChannel,
   });
   const [addCategoryOpen, setAddCategoryOpen] = useState(false);
+  const [editingCategory, setEditingCategory] = useState<Category | null>(null);
+  const [editingBrand, setEditingBrand] = useState<Brand | null>(null);
   const [addCategoryParentId, setAddCategoryParentId] = useState<string | null>(null);
   const [listCategoryOpen, setListCategoryOpen] = useState(false);
   const { brands, refetch: refetchBrands } = useCatalogBrands({
@@ -1184,6 +1187,10 @@ export function ProductForm({
                         category: primary?.name || "",
                       }));
                     }}
+                    onAdd={() => {
+                      setAddCategoryParentId(null);
+                      setAddCategoryOpen(true);
+                    }}
                     onList={() => setListCategoryOpen(true)}
                     className="w-full"
                   />
@@ -1193,6 +1200,7 @@ export function ProductForm({
                     brands={brands}
                     value={values.brandId}
                     onChange={(id, name) => { set("brandId", id); set("brand", name); }}
+                    onAdd={() => setAddBrandOpen(true)}
                     onList={() => setListBrandOpen(true)}
                     className="w-full"
                   />
@@ -1203,6 +1211,7 @@ export function ProductForm({
                       options={warrantyOptions}
                       value={values.warranty}
                       onChange={(v) => set("warranty", v)}
+                      onAdd={() => setAddWarrantyOpen(true)}
                       onList={() => setListWarrantyOpen(true)}
                       className="w-full"
                     />
@@ -1770,6 +1779,10 @@ export function ProductForm({
             toast.error(err instanceof Error ? err.message : "Failed to delete category");
           }
         }}
+        onEdit={(node) => {
+          const cat = categories.find((c) => c.id === node.id);
+          if (cat) setEditingCategory(cat);
+        }}
         onRename={async (node, name) => {
           try {
             await patchCatalogCategory(node.id, { name, caption: name });
@@ -1799,7 +1812,7 @@ export function ProductForm({
           try {
             const created = await createCatalogBrand({
               name,
-              slug: crypto.randomUUID(),
+              slug: name.trim().toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "") || crypto.randomUUID(),
               active: true,
               channel: categoryChannel,
             });
@@ -1824,6 +1837,7 @@ export function ProductForm({
             toast.error(err instanceof Error ? err.message : "Failed to delete brand");
           }
         }}
+        onEdit={(brand) => setEditingBrand(brand)}
         onRename={async (brand, name) => {
           try {
             await patchCatalogBrand(brand.id, { name });
@@ -1875,6 +1889,31 @@ export function ProductForm({
       />
 
       <CategoryFormDialog
+        open={Boolean(editingCategory)}
+        onOpenChange={(next) => !next && setEditingCategory(null)}
+        mode="edit"
+        category={editingCategory}
+        categories={categories}
+        onSave={async (data) => {
+          if (!editingCategory) return;
+          try {
+            await patchCatalogCategory(editingCategory.id, data);
+            await refetchCategories();
+            // The product keeps the category name it was saved with, so follow a rename.
+            if (data.name) {
+              setValues((v) =>
+                v.categoryId === editingCategory.id ? { ...v, category: data.name ?? v.category } : v,
+              );
+            }
+            toast.success("Category updated");
+          } catch (err) {
+            toast.error(err instanceof Error ? err.message : "Failed to update category");
+          } finally {
+            setEditingCategory(null);
+          }
+        }}
+      />
+      <CategoryFormDialog
         open={addCategoryOpen}
         onOpenChange={(next) => {
           setAddCategoryOpen(next);
@@ -1919,6 +1958,26 @@ export function ProductForm({
             toast.success("Category created");
           } catch (err) {
             toast.error(err instanceof Error ? err.message : "Failed to create category");
+          }
+        }}
+      />
+      <BrandFormDialog
+        open={Boolean(editingBrand)}
+        onOpenChange={(next) => !next && setEditingBrand(null)}
+        mode="edit"
+        brand={editingBrand}
+        onSave={async (data) => {
+          if (!editingBrand) return;
+          try {
+            const updated = await patchCatalogBrand(editingBrand.id, data);
+            await refetchBrands();
+            // Keep the product's brand name in step with a rename.
+            setValues((v) => (v.brandId === updated.id ? { ...v, brand: updated.name } : v));
+            toast.success("Brand updated");
+          } catch (err) {
+            toast.error(err instanceof Error ? err.message : "Failed to update brand");
+          } finally {
+            setEditingBrand(null);
           }
         }}
       />
