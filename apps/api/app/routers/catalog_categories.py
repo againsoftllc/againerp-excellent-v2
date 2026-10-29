@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 import uuid
 from typing import Dict, List, Optional, Set
 
@@ -220,10 +221,17 @@ def create_category(
     _: object = Depends(require_write_access),
 ) -> CategoryResponse:
     new_id = str(uuid.uuid4())
-    slug = (payload.slug or "").strip() or new_id
-    existing = db.query(CatalogCategory).filter(CatalogCategory.slug == slug).first()
-    if existing:
-        raise HTTPException(status_code=409, detail="Category slug already exists")
+    slug = (payload.slug or "").strip()
+    if slug:
+        if db.query(CatalogCategory).filter(CatalogCategory.slug == slug).first():
+            raise HTTPException(status_code=409, detail="Category slug already exists")
+    else:
+        # No slug given (e.g. a category made from the product drawer): derive it from the name so the
+        # storefront URL reads /eurovision, not the row id. A taken slug gets -2, -3, ...
+        base = re.sub(r"[^a-z0-9]+", "-", payload.name.strip().lower()).strip("-")[:80] or new_id
+        slug, n = base, 2
+        while db.query(CatalogCategory).filter(CatalogCategory.slug == slug).first():
+            slug, n = f"{base}-{n}", n + 1
 
     parent = _validate_parent(
         db,
