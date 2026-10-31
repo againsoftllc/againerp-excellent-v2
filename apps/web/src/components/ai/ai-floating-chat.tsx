@@ -2,7 +2,7 @@
 
 import * as React from "react";
 import { createPortal } from "react-dom";
-import { Eraser, Globe, Loader2, Minus, X } from "lucide-react";
+import { Eraser, Globe, Loader2, Minus, Paperclip, X } from "lucide-react";
 import { AiDocumentDrawer, parseDocLink, type AiDocumentRef } from "@/components/ai/ai-document-drawer";
 import { AiRobotAvatar } from "@/components/ai/ai-robot-avatar";
 import { MarkdownLite } from "@/components/ai/markdown-lite";
@@ -18,7 +18,39 @@ type ChatMsg = {
   // (preview/approval/question/success) — they render as plain assistant text.
   role: "user" | "assistant" | "status" | string;
   content: string;
+  /** Files sent with a user message (preview is a blob URL, so it is dropped when history is saved). */
+  files?: { name: string; previewUrl?: string }[];
 };
+
+type PendingFile = { file: File; name: string; mime: string; size: number; previewUrl?: string };
+const ATTACH_ACCEPT =
+  "image/png,image/jpeg,image/webp,image/gif,application/pdf,text/csv,text/plain,text/markdown,application/json,.csv,.txt,.md,.json,.xlsx,.xls";
+const MAX_ATTACHMENTS = 5;
+const MAX_ATTACHMENT_BYTES = 8 * 1024 * 1024;
+const MAX_IMAGE_BYTES = 5 * 1024 * 1024;
+
+/** Files on the clipboard — `files` first, then `items` (some sources, e.g. "Copy image" in a browser, only fill items). */
+function clipboardFiles(data: DataTransfer | null | undefined): File[] {
+  if (!data) return [];
+  const direct = Array.from(data.files ?? []);
+  if (direct.length) return direct;
+  const out: File[] = [];
+  for (const item of Array.from(data.items ?? [])) {
+    if (item.kind !== "file") continue;
+    const f = item.getAsFile();
+    if (f) out.push(f.name ? f : new File([f], `pasted-image.${(f.type.split("/")[1] || "png").replace("jpeg", "jpg")}`, { type: f.type }));
+  }
+  return out;
+}
+
+function readAsBase64(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const r = new FileReader();
+    r.onload = () => resolve(String(r.result).split(",")[1] ?? "");
+    r.onerror = () => reject(r.error ?? new Error("Could not read file"));
+    r.readAsDataURL(file);
+  });
+}
 
 const STORAGE_KEY = "againerp-ai-float-v3";
 const HISTORY_KEY = "againerp-ai-chat-history-v1";
@@ -80,7 +112,10 @@ function loadHistory(): ChatMsg[] {
 
 function saveHistory(messages: ChatMsg[]) {
   try {
-    localStorage.setItem(HISTORY_KEY, JSON.stringify(messages));
+    localStorage.setItem(
+      HISTORY_KEY,
+      JSON.stringify(messages.map((m) => (m.files ? { ...m, files: m.files.map((f) => ({ name: f.name })) } : m))),
+    );
   } catch {
     /* ignore */
   }
@@ -181,6 +216,44 @@ export function AiFloatingChat() {
   } | null>(null);
   const listRef = React.useRef<HTMLDivElement>(null);
   const inputRef = React.useRef<HTMLTextAreaElement>(null);
+  const fileInputRef = React.useRef<HTMLInputElement>(null);
+  const [pendingFiles, setPendingFiles] = React.useState<PendingFile[]>([]);
+
+  const addFiles = (list: FileList | File[] | null | undefined) => {
+    const incoming = Array.from(list ?? []);
+    if (!incoming.length) return;
+    setPendingFiles((cur) => {
+      const next = [...cur];
+      for (const file of incoming) {
+        if (next.length >= MAX_ATTACHMENTS) {
+          setError(`At most ${MAX_ATTACHMENTS} files per message`);
+          break;
+        }
+        const isImage = file.type.startsWith("image/");
+        if (file.size > (isImage ? MAX_IMAGE_BYTES : MAX_ATTACHMENT_BYTES)) {
+          setError(`${file.name} is too large (max ${isImage ? "5" : "8"} MB)`);
+          continue;
+        }
+        if (next.some((p) => p.name === file.name && p.size === file.size)) continue;
+        next.push({
+          file,
+          name: file.name || (isImage ? "image.png" : "file"),
+          mime: file.type,
+          size: file.size,
+          previewUrl: isImage ? URL.createObjectURL(file) : undefined,
+        });
+      }
+      return next;
+    });
+  };
+
+  const removeFile = (idx: number) => {
+    setPendingFiles((cur) => {
+      const gone = cur[idx];
+      if (gone?.previewUrl) URL.revokeObjectURL(gone.previewUrl);
+      return cur.filter((_, i) => i !== idx);
+    });
+  };
 
   // Mirrors the backend's ai_access_allowed(): unbound (no Center) stays live/permissive;
   // only a bound Center that has actively disabled AI shows offline.
@@ -298,6 +371,7 @@ export function AiFloatingChat() {
     token: string,
     text: string,
     assistantMsgId: string,
+    attachments?: { name: string; mime: string; size: number; data: string }[],
   ): Promise<{ conversationId?: string; searchedWeb: boolean }> {
     const res = await fetch("/api/v1/ai/chat/stream", {
       method: "POST",
@@ -309,6 +383,7 @@ export function AiFloatingChat() {
         message: text,
         conversation_id: conversationId ?? undefined,
         enable_web_search: webSearchEnabled,
+        attachments,
       }),
     });
 
@@ -377,7 +452,8 @@ export function AiFloatingChat() {
   }
 
   async function sendPrompt(prompt: string) {
-    const text = prompt.trim();
+    const files = pendingFiles;
+    const text = prompt.trim() || (files.length ? "Please look at the attached file(s)." : "");
     if (!text || loading) return;
 
     // Unbound (no Center configured — single-tenant local) stays permissive, matching
@@ -390,9 +466,15 @@ export function AiFloatingChat() {
 
     setError(null);
     setStatusHint(null);
-    const userMsg: ChatMsg = { id: `u_${Date.now()}`, role: "user", content: text };
+    const userMsg: ChatMsg = {
+      id: `u_${Date.now()}`,
+      role: "user",
+      content: text,
+      files: files.length ? files.map((f) => ({ name: f.name, previewUrl: f.previewUrl })) : undefined,
+    };
     setMessages((m) => [...m, userMsg]);
     setInput("");
+    setPendingFiles([]);
     setLoading(true);
 
     try {
@@ -410,7 +492,12 @@ export function AiFloatingChat() {
       const assistantMsgId = `a_${Date.now()}`;
       let result: { conversationId?: string; searchedWeb: boolean };
       try {
-        result = await streamChat(token, text, assistantMsgId);
+        const attachments = files.length
+          ? await Promise.all(
+              files.map(async (f) => ({ name: f.name, mime: f.mime, size: f.size, data: await readAsBase64(f.file) })),
+            )
+          : undefined;
+        result = await streamChat(token, text, assistantMsgId, attachments);
       } catch (err) {
         if ((err as { status?: number }).status === 404) {
           // Stale/foreign conversation_id — drop it so the next send starts a fresh thread.
@@ -515,6 +602,23 @@ export function AiFloatingChat() {
           aria-modal="false"
           onPointerDown={(e) => e.stopPropagation()}
           onMouseDown={(e) => e.stopPropagation()}
+          onPaste={(e) => {
+            // Ctrl+V of a copied image / screenshot anywhere in the chat window
+            const files = clipboardFiles(e.clipboardData);
+            if (files.length) {
+              e.preventDefault();
+              addFiles(files);
+            }
+          }}
+          onDragOver={(e) => {
+            if (e.dataTransfer?.types?.includes("Files")) e.preventDefault();
+          }}
+          onDrop={(e) => {
+            if (e.dataTransfer?.files?.length) {
+              e.preventDefault();
+              addFiles(e.dataTransfer.files);
+            }
+          }}
         >
           <div
             className="flex h-8 shrink-0 cursor-grab items-center gap-1.5 border-b border-border/40 bg-muted/15 px-2 active:cursor-grabbing"
@@ -590,6 +694,20 @@ export function AiFloatingChat() {
                     key={m.id}
                     className="ml-auto w-fit max-w-[88%] rounded-none border border-violet-400/30 bg-violet-500/10 px-2.5 py-1 text-[11px] leading-snug whitespace-pre-wrap text-foreground"
                   >
+                    {m.files?.length ? (
+                      <div className="mb-1 flex flex-wrap gap-1">
+                        {m.files.map((f, i) =>
+                          f.previewUrl ? (
+                            // eslint-disable-next-line @next/next/no-img-element
+                            <img key={i} src={f.previewUrl} alt={f.name} className="max-h-28 max-w-full rounded-none border border-border/50 object-contain" />
+                          ) : (
+                            <span key={i} className="rounded-none border border-border/50 bg-background/50 px-1.5 py-0.5 text-[10px]">
+                              📎 {f.name}
+                            </span>
+                          ),
+                        )}
+                      </div>
+                    ) : null}
                     {m.content}
                   </div>
                 );
@@ -620,6 +738,31 @@ export function AiFloatingChat() {
             ) : null}
           </div>
 
+          {pendingFiles.length ? (
+            <div className="flex shrink-0 flex-wrap gap-1.5 border-t border-border/40 bg-muted/10 px-2 pt-1.5">
+              {pendingFiles.map((f, i) => (
+                <div key={`${f.name}-${i}`} className="relative">
+                  {f.previewUrl ? (
+                    // eslint-disable-next-line @next/next/no-img-element
+                    <img src={f.previewUrl} alt={f.name} className="h-12 w-12 rounded-none border border-border/50 object-cover" />
+                  ) : (
+                    <div className="flex h-12 max-w-[120px] items-center rounded-none border border-border/50 bg-background/50 px-1.5 text-[10px]">
+                      <span className="truncate">📎 {f.name}</span>
+                    </div>
+                  )}
+                  <button
+                    type="button"
+                    aria-label={`Remove ${f.name}`}
+                    onClick={() => removeFile(i)}
+                    className="absolute -top-1 -right-1 flex h-4 w-4 items-center justify-center rounded-full border border-border bg-background text-muted-foreground hover:text-foreground"
+                  >
+                    <X className="h-2.5 w-2.5" />
+                  </button>
+                </div>
+              ))}
+            </div>
+          ) : null}
+
           <form
             className="flex shrink-0 items-center gap-1.5 border-t border-border/40 bg-muted/10 px-2 py-1.5"
             onSubmit={(e) => {
@@ -627,6 +770,26 @@ export function AiFloatingChat() {
               void sendPrompt(input);
             }}
           >
+            <input
+              ref={fileInputRef}
+              type="file"
+              multiple
+              accept={ATTACH_ACCEPT}
+              className="hidden"
+              onChange={(e) => {
+                addFiles(e.target.files);
+                e.target.value = "";
+              }}
+            />
+            <button
+              type="button"
+              aria-label="Attach image or file"
+              title="Attach image / file (or paste a screenshot)"
+              onClick={() => fileInputRef.current?.click()}
+              className="flex h-8 w-8 shrink-0 items-center justify-center rounded-none border border-border/50 bg-background/40 text-muted-foreground hover:text-violet-600"
+            >
+              <Paperclip className="h-3.5 w-3.5" />
+            </button>
             <button
               type="button"
               aria-label={webSearchEnabled ? "Web search on — click to turn off" : "Turn on web search for this chat"}
@@ -660,7 +823,7 @@ export function AiFloatingChat() {
             </div>
             <button
               type="submit"
-              disabled={busy || !input.trim()}
+              disabled={busy || (!input.trim() && !pendingFiles.length)}
               aria-label="Send"
               className="flex h-8 w-8 shrink-0 items-center justify-center rounded-none border border-border/50 bg-background/40 text-violet-600 disabled:opacity-40 dark:bg-background/25 dark:text-violet-300"
             >

@@ -16,7 +16,7 @@ import {
   verticalListSortingStrategy,
 } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
-import { ChevronDown, Copy, Eye, EyeOff, GripVertical, ImageUp, Trash2 } from "lucide-react";
+import { ChevronDown, Copy, Eye, EyeOff, GripVertical, ImageUp, Plus, Trash2 } from "lucide-react";
 import {
   AgainDrawerControlBar,
   AgainDrawerLayout,
@@ -56,7 +56,7 @@ type Props = {
   saving?: boolean;
 };
 
-type PickerMode = { kind: "replace"; index: number } | null;
+type PickerMode = { kind: "replace"; index: number } | { kind: "add" } | null;
 
 function bannerPreviewUrl(url: string): string {
   if (!url) return "";
@@ -517,6 +517,13 @@ export function LiveEditHeroDrawer({ onBack, open,
     }
 
     const patch = await applyMediaItem(items[0]);
+    if (picker.kind === "add") {
+      const added = defaultHeroSlide({ ...patch, href: "#", hidden: false });
+      pushHero({ ...hero, slides: [...hero.slides, added] });
+      setExpandedId(added.id);
+      setPicker(null);
+      return;
+    }
     updateSlide(picker.index, {
       ...patch,
       alt: patch.alt || hero.slides[picker.index]?.alt || "",
@@ -614,6 +621,18 @@ export function LiveEditHeroDrawer({ onBack, open,
                     </SortableContext>
                   </DndContext>
                 )}
+
+                <button
+                  type="button"
+                  className="flex h-10 w-full items-center justify-center gap-1.5 rounded-md border border-dashed border-border bg-card/60 text-[13px] font-medium text-muted-foreground transition-colors hover:border-primary hover:text-primary"
+                  onClick={() => {
+                    void refetchMedia();
+                    setPicker({ kind: "add" });
+                  }}
+                >
+                  <Plus className="size-4" />
+                  Add banner
+                </button>
               </div>
             </div>
           </AgainDrawerScrollBody>
@@ -628,7 +647,7 @@ export function LiveEditHeroDrawer({ onBack, open,
         }}
         items={mediaItems}
         mode="single"
-        title="Change banner image"
+        title={picker?.kind === "add" ? "Add banner image" : "Change banner image"}
         accept={["image"]}
         initialSelectedIds={[]}
         onSelect={(items) => {
