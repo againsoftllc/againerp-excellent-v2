@@ -186,6 +186,7 @@ def profile_fields(db: Session, profile_id: str) -> list[dict]:
             "unit": a.unit,
             "options": parse_json_list(a.predefined_values),
             "filterable": bool(a.is_filterable),
+            "filter_display_type": a.filter_display_type,
             "field_type": a.field_type,
         }
         for a in attrs
@@ -193,6 +194,21 @@ def profile_fields(db: Session, profile_id: str) -> list[dict]:
 
 
 # ---------------------------------------------------------------------------------- mapping
+
+_MULTI_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "values": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {"field_id": {"type": "string"}, "options": {"type": "array", "items": {"type": "string"}}},
+                "required": ["field_id", "options"],
+            },
+        }
+    },
+    "required": ["values"],
+}
 
 _MAP_SCHEMA = {
     "type": "object",
@@ -320,6 +336,47 @@ def _fit_option(field: dict, value: str) -> Optional[str]:
     return best[2] if best else None
 
 
+_NUM_RE = re.compile(r"\d+(?:\.\d+)?")
+_BELOW_RE = re.compile(r"\b(below|under|less than|up to|upto|max)\b", re.I)
+_ABOVE_RE = re.compile(r"\b(above|over|more than|min)\b|\+|&\s*(above|more|up)", re.I)
+
+
+_BUCKET_WORDS = {"to", "and", "below", "under", "above", "over", "less", "than", "more", "up", "upto", "max", "min"}
+
+
+def _unit_letters(text: str) -> set:
+    return {w for w in re.findall(r"[a-z]+", (text or "").lower()) if w not in _BUCKET_WORDS}
+
+
+def _bucket_option(field: dict, value: str) -> Optional[str]:
+    """The numeric bucket option the value falls under: '16-Inch' -> '16-Inch to 16.9-Inch', '13.3"' -> '13-Inch to 13.9-Inch',
+    '14 Inch' -> 'Below 15-inch'. Only when the value and the option speak the same unit (or the option has none). None = no bucket."""
+    nums = _NUM_RE.findall(value or "")
+    if not nums:
+        return None
+    x = float(nums[0])
+    unit = _unit_letters(value)
+    for option in field["options"]:
+        found = [float(n) for n in _NUM_RE.findall(option)]
+        if not found:
+            continue
+        ounit = _unit_letters(option)
+        if ounit and unit and not (ounit & unit):
+            continue
+        if len(found) >= 2:
+            lo, hi = min(found[:2]), max(found[:2])
+            top = hi if float(hi).is_integer() else int(hi) + 1  # "13.9" closes the bucket at the next whole number
+            if lo <= x < top or x == hi:
+                return option
+        elif _BELOW_RE.search(option):
+            if x < found[0] or (x == found[0] and re.search(r"up to|upto|max", option, re.I)):
+                return option
+        elif _ABOVE_RE.search(option):
+            if x >= found[0]:
+                return option
+    return None
+
+
 _LABEL_STOPWORDS = {"the", "of", "and", "type", "max", "maximum", "total", "number", "no", "x"}
 
 
@@ -362,14 +419,17 @@ MAX_MODEL_ROWS = 200
 
 
 def map_values_traced(
-    db: Session, company_id: Optional[str], specs: SourceSpecs, fields: list[dict]
+    db: Session, company_id: Optional[str], specs: SourceSpecs, fields: list[dict], context: str = "",
+    displays: Optional[dict[str, str]] = None,
 ) -> tuple[dict[str, str], dict[str, str], dict[str, str]]:
-    """(values, off_options, source_of). `values`: {field_id: value} the source answers - for a field with allowed
-    values, only one of those. `off_options`: {field_id: source value} for fields whose allowed values don't include what
-    the source says (adding an option changes the profile for everyone, so callers only suggest it). `source_of`:
+    """(values, off_options, source_of). 'values': {field_id: value} the source answers - for a field with allowed
+    values, only one of those. 'off_options': {field_id: source value} for fields whose allowed values don't include what
+    the source says (adding an option changes the profile for everyone, so callers only suggest it). 'source_of':
     {field_id: normalised label of the source row it came from}, so the caller can keep the rows that were NOT used.
     Every open attribute is answered by the row that means the same ("CPU" <- "Processor Model"); an attribute keeps
-    its own name and the source's name is never added as another one."""
+    its own name and the source's name is never added as another one. 'displays' (filled in place): {field_id: the source's
+    own wording} for a field whose value is one of its filter options but is not what the source says ("Intel Core i7" for
+    "Core i7 14650HX") - the product page shows that wording, the storefront filter uses the option."""
     specs = _clean_specs(specs)
     if not specs or not fields:
         return {}, {}, {}
@@ -378,27 +438,48 @@ def map_values_traced(
     values: dict[str, str] = {}
     off: dict[str, str] = {}
     source_of: dict[str, str] = {}
+    hint: dict[str, tuple[str, Optional[str]]] = {}  # filter field -> (what the source says, its row) when that is not one of its options
 
-    def put(fid: str, val: str, label: Optional[str] = None) -> None:
+    def put(fid: str, val: str, label: Optional[str] = None, *, defer: bool = False, raw: Optional[str] = None) -> None:
         field = by_id[fid]
         val = val.strip()[:2000]
         if not val or is_placeholder(val):
             return
+        if field.get("field_type") == "multi_select":
+            return  # a product has SEVERAL of these - fill_multi_select takes every option that applies, one value here would block it
+        said = val
         if field["options"]:
             fit = _fit_option(field, val)
+            if fit is None and field.get("filter_display_type") == "range":
+                fit = _bucket_option(field, val)
             if fit is None:
+                if defer and field.get("filterable"):
+                    hint.setdefault(fid, (val, label))  # the model gets the first chance to sort it into one of the options
+                    return
                 off[fid] = _suggest_option(field, val)
                 if label:
                     source_of[fid] = _norm(label)
                 return
             val = fit
         values[fid] = val
+        shown = (raw if raw is not None else said).strip()[:2000]
+        if displays is not None and field["options"] and shown and _norm(shown) != _norm(val):
+            displays[fid] = shown
         off.pop(fid, None)
         if label:
             source_of[fid] = _norm(label)
 
+    def finish() -> tuple[dict[str, str], dict[str, str], dict[str, str]]:
+        # a filter the model could not sort into an option either: suggest the source's own value as a new option (as before)
+        for fid, (said, label) in hint.items():
+            if fid not in values and fid not in off:
+                off[fid] = _suggest_option(by_id[fid], said)
+                if label:
+                    source_of[fid] = _norm(label)
+        return values, off, source_of
+
     for fid, (label, val) in _exact_hits(specs, fields).items():
-        put(fid, val, label)
+        put(fid, val, label, defer=True)
     # Dropdown/filter fields still open: a source row whose label shares a meaningful word with
     # the field ("Panel Size" <-> "Display Size") and whose value fits an option or carries the
     # options' unit (17 Inch for a field of 24"/27"...) - deterministic, before any LLM call.
@@ -411,7 +492,7 @@ def map_values_traced(
                 if not words & _label_words(i["label"]):
                     continue
                 if _fit_option(f, i["value"]) is not None or _has_option_unit(f, i["value"]):
-                    put(f["id"], i["value"], i["label"])
+                    put(f["id"], i["value"], i["label"], defer=True)
                     break
             if f["id"] in values or f["id"] in off:
                 break
@@ -422,7 +503,7 @@ def map_values_traced(
     missing = [f for f in fields if f["id"] not in values and f["id"] not in off][:MAX_MODEL_FIELDS]
     rows = [(g["group"], i) for g in specs for i in g["items"] if _norm(i["label"]) not in used][:MAX_MODEL_ROWS]
     if not missing or not rows:
-        return values, off, source_of
+        return finish()
 
     from app.services.catalog_ai.llm_extractor import generate_structured
 
@@ -431,12 +512,14 @@ def map_values_traced(
         + (" [STOREFRONT FILTER]" if f.get("filterable") else "")
         + (f" (unit: {f['unit']})" if f.get("unit") else "")
         + (f" | allowed values: {', '.join(f['options'])}" if f["options"] else "")
+        + (f" | the source's own row says: {hint[f['id']][0]}" if f["id"] in hint else "")
         for f in missing
     )
     source_lines = "\n".join(f"[{group}] {i['label']}: {i['value']}" for group, i in rows)
     prompt = (
         "Fill these product specification fields from the product's source spec table.\n\n"
-        f"Fields to fill:\n{field_lines}\n\n"
+        + (f"Product title: {context}\n(for a field about the kind of product - a series, a type - the title counts as a source too)\n\n" if context else "")
+        + f"Fields to fill:\n{field_lines}\n\n"
         f"Source specifications (from the product page):\n{source_lines}\n\n"
         "Rules: match by MEANING, not by exact wording - shops name the same thing differently ('Processor', 'CPU', "
         "'Processor Model' and 'Processor Type' are one thing; so are 'Memory' / 'RAM', 'Display' / 'Screen' / 'Monitor', "
@@ -444,10 +527,11 @@ def map_values_traced(
         "that means the same, and give that row's label in source_label exactly as written in the source. The field "
         "keeps its own name - never rename it. Use ONLY information in the source specifications - never guess or add "
         "facts. Copy the value as written (you may drop the label or reformat units to match the field). When a field "
-        "lists allowed values, use exactly one of them if one means the same thing; if none does, give the value as the "
-        "source writes it (e.g. '17 Inch') - never answer 'N/A', '-' or 'none' for a field the source has a value for, "
-        "and leave the field out when it really has none. Fields marked [STOREFRONT FILTER] are how shoppers filter the "
-        "catalog - never skip one the source has any information for: pick the allowed value the product "
+        "lists allowed values, use exactly one of them if one means the same thing - combine rows when needed (graphics "
+        "'NVIDIA GeForce RTX 5050' with 8GB memory -> 'Dedicated 8GB'; processor 'Core i7 14650HX' -> 'Intel Core i7'); if none "
+        "does, give the value as the source writes it (e.g. '17 Inch') - never answer 'N/A', '-' or 'none' for a field the "
+        "source has a value for, and leave the field out when it really has none. Fields marked [STOREFRONT FILTER] are how "
+        "shoppers filter the catalog - never skip one the source has any information for: pick the allowed value the product "
         "falls under (e.g. processor 'AMD Ryzen 7 8840HS' -> 'AMD', RAM '16GB LPDDR5X' -> '16 GB', a brand or "
         "type named inside a longer value), and look across ALL source rows (a display size may sit under "
         "'Display', RAM under 'Memory'). One source row feeds one field. Leave out any field the source does not answer. "
@@ -459,7 +543,7 @@ def map_values_traced(
             system="You map product specification data into structured fields.",
         )
     except HTTPException:
-        return values, off, source_of
+        return finish()
     wanted = {f["id"] for f in missing}
     available = {_norm(i["label"]): i for _g, i in rows}
     by_value = {_norm(i["value"]): i for _g, i in rows}
@@ -474,10 +558,12 @@ def map_values_traced(
         label = src["label"] if src else None
         if label and _norm(label) in claimed:
             continue  # a source row feeds one field
-        put(fid, value, label)
+        # the wording the product page keeps: the field's own source row if it has one, else the row the model named
+        raw = hint[fid][0] if fid in hint else (src["value"] if src else None)
+        put(fid, value, label, raw=raw)
         if label and (fid in values or fid in off):
             claimed.add(_norm(label))
-    return values, off, source_of
+    return finish()
 
 
 def map_values_detailed(
@@ -564,7 +650,8 @@ def filter_gaps(db: Session, product: CatalogProduct) -> list[str]:
 
 
 def fill_product(
-    db: Session, product: CatalogProduct, profile: CatalogAttributeProfile, values: dict[str, str], *, overwrite: bool = False
+    db: Session, product: CatalogProduct, profile: CatalogAttributeProfile, values: dict[str, str], *, overwrite: bool = False,
+    displays: Optional[dict[str, str]] = None,
 ) -> int:
     """Link the product to the profile and write the values. Existing values are kept unless
     `overwrite`. Returns how many values were written. Caller commits."""
@@ -580,6 +667,7 @@ def fill_product(
             if row.value.strip() and not overwrite:
                 continue
             row.value = value
+            row.display_value = (displays or {}).get(attr_id)
         else:
             db.add(
                 CatalogProductAttributeValue(
@@ -587,6 +675,7 @@ def fill_product(
                     product_id=product.id,
                     attribute_id=attr_id,
                     value=value,
+                    display_value=(displays or {}).get(attr_id),
                     sort_order=idx,
                 )
             )
@@ -653,38 +742,167 @@ def unmatched_filters(fields: list[dict], source_filters: list[dict]) -> list[di
     return out
 
 
-def attach_source_filters(proposal: dict, specs: SourceSpecs, source_filters: list[dict]) -> dict:
-    """Make the proposal's attributes filterable from the SOURCE shop's own filters (its category page): a source filter
-    ("Wi-Fi Standard": Wi-Fi 6 / Wi-Fi 5 ...) belongs to the attribute whose label shares a meaningful word with it. The
-    attribute gets the filter's options (as the shop writes them) as its predefined values. A filter that no source row
-    names (e.g. "Key Feature": Curved / HDR / ...) becomes an attribute of the "Key Feature" group - multi-select, since a
-    product can have several of them. Returns the proposal with `filters` {attribute label: [options]} and `multi`
-    (the attribute labels that are multi-select)."""
-    labels = [a for g in proposal.get("groups", []) for a in g["attributes"]]
-    taken: set[str] = set()
-    filters: dict[str, list[str]] = {}
-    extra: list[tuple[str, list[str]]] = []
-    for f in source_filters or []:
-        title, options = str(f.get("title") or ""), [str(o) for o in f.get("options") or []]
-        if len(options) < 2:
+_FILTER_MULTI_TITLE = re.compile(r"feature|additional|other|support|accessor|included|function", re.I)
+_FILTER_RANGE_WORD = re.compile(r"\b(to|below|above|under|over|up to|upto|less than|more than)\b|\d\s*-\s*\d|\+|&\s*(above|more)", re.I)
+
+
+def infer_filter_display(title: str, options: list[str]) -> str:
+    """How the storefront shows a source filter: "range" for numeric buckets ("13-Inch to 13.9-Inch", "Below 13-inch"),
+    "multi_select" when a product can have several ("Special Features"), else "single_select"."""
+    if _FILTER_MULTI_TITLE.search(title or ""):
+        return "multi_select"
+    ranged = [o for o in options if re.search(r"\d", o) and _FILTER_RANGE_WORD.search(o)]
+    if options and len(ranged) >= max(2, len(options) // 2):
+        return "range"
+    return "single_select"
+
+
+_FILTER_PLAN_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "matches": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {"filter": {"type": "string"}, "group": {"type": "string"}, "attribute": {"type": "string"}},
+                "required": ["filter", "group", "attribute"],
+            },
+        }
+    },
+    "required": ["matches"],
+}
+
+
+def plan_filter_targets(
+    db: Session, company_id: Optional[str], groups: list[dict], specs: SourceSpecs, items: list[dict]
+) -> dict[str, tuple[str, str]]:
+    """Which spec attribute each source filter belongs to, judged by meaning: {filter title: (group, attribute)}; attribute ""
+    = no attribute says the same, a new one goes into 'group'. Only valid answers are kept (an existing attribute, used by one
+    filter at most). Best effort: {} when the model is unavailable - the name-based matching then decides."""
+    sample: dict[str, str] = {}
+    for g in _clean_specs(specs):
+        for i in g["items"]:
+            sample.setdefault(_norm(i["label"]), i["value"])
+    attr_lines = "\n".join(
+        f"- [{g['name']}] {a}" + (f": {sample[_norm(a)][:60]}" if _norm(a) in sample else "") for g in groups for a in g["attributes"]
+    )
+    filter_lines = "\n".join(f"- {it['title']}: {', '.join(it['options'][:14])}" + (" ..." if len(it["options"]) > 14 else "") for it in items)
+    group_names = ", ".join(g["name"] for g in groups)
+    try:
+        from app.services.catalog_ai.llm_extractor import generate_structured
+
+        data = generate_structured(
+            "A product type's specification profile has these attributes (group in brackets, with this product's value):\n"
+            + attr_lines
+            + "\n\nThe source shop filters its category page by:\n"
+            + filter_lines
+            + "\n\nFor EACH filter pick the ONE attribute that holds the same property, judged by meaning even when the names differ "
+            "('SSD' filter = the storage capacity attribute, 'RAM Size' = 'RAM', 'Graphics' = the graphics model attribute, 'Processor "
+            "Type' = the processor brand attribute). An attribute serves at most one filter. When no attribute holds that property, "
+            "answer attribute \"\" and name the existing group it fits best (one of: " + group_names + "). Answer group and attribute "
+            "exactly as written above.",
+            _FILTER_PLAN_SCHEMA, db=db, company_id=company_id or "default",
+            system="You connect a shop's storefront filters to a product specification profile's attributes.",
+        )
+    except Exception:  # noqa: BLE001
+        return {}
+    valid = {(g["name"], a) for g in groups for a in g["attributes"]}
+    titles = {it["title"] for it in items}
+    out: dict[str, tuple[str, str]] = {}
+    taken: set[tuple[str, str]] = set()
+    for m in data.get("matches") or []:
+        title, grp, attr = str((m or {}).get("filter") or ""), str((m or {}).get("group") or ""), str((m or {}).get("attribute") or "")
+        if title not in titles or title in out:
             continue
-        best: Optional[str] = None
-        for label in labels:
-            if label not in taken and _filter_matches_label(title, label):
-                best = label
-                break
-        if best:
-            taken.add(best)
-            filters[best] = options
-        elif title and title not in labels:
-            extra.append((title[:255], options))
-    groups = [dict(g) for g in proposal.get("groups", [])]
-    multi: list[str] = []
-    if extra:
-        groups.append({"name": KEY_FEATURE_GROUP, "attributes": [t_ for t_, _ in extra]})
-        filters.update({t_: o_ for t_, o_ in extra})
-        multi = [t_ for t_, _ in extra]
-    return {**proposal, "groups": groups, "filters": filters, "multi": multi}
+        if attr and (grp, attr) in valid and (grp, attr) not in taken:
+            out[title] = (grp, attr)
+            taken.add((grp, attr))
+        elif not attr and grp in {g["name"] for g in groups}:
+            out[title] = (grp, "")
+    return out
+
+
+def _match_filters_to_attrs(items: list[dict], attrs: list[tuple[str, str]], taken: set) -> dict[str, tuple[str, str]]:
+    """Name-based fallback: the attribute with the same name, then the same concept, then one whose meaningful words contain
+    (or are contained in) the filter's. An attribute serves one filter."""
+    out: dict[str, tuple[str, str]] = {}
+    used = set(taken)
+
+    def assign(title: str, test) -> None:
+        if title in out:
+            return
+        for g, a in attrs:
+            if (g, a) not in used and test(a):
+                out[title] = (g, a)
+                used.add((g, a))
+                return
+
+    for it in items:
+        assign(it["title"], lambda a, t=it["title"]: slugify_code(a) == slugify_code(t))
+    for it in items:
+        ck = concept_key(it["title"])
+        if ck:
+            assign(it["title"], lambda a, ck=ck: concept_key(a) == ck)
+    for it in items:
+        w = _label_words(it["title"])
+        if w:
+            assign(it["title"], lambda a, w=w: bool(_label_words(a)) and (w <= _label_words(a) or _label_words(a) <= w))
+    return out
+
+
+def attach_source_filters(
+    proposal: dict, specs: SourceSpecs, source_filters: list[dict], *, db: Optional[Session] = None, company_id: Optional[str] = None
+) -> dict:
+    """Make the proposed profile's attributes filterable from the SOURCE shop's own filters (its category pages). A filter is NOT
+    a second attribute: it goes onto the attribute that holds the same property (the model judges by meaning - "SSD" = the storage
+    capacity, "Graphics" = the graphics model; names decide when it is unavailable), which then takes the shop's options exactly as
+    written. No attribute for it -> a new attribute in the group that fits best. A product's value is the option the filter uses; the
+    source's own wording is kept next to it as the text the product page shows. Returns the proposal with "filter_attrs"
+    [{title, group, attribute, kind, options, new}] plus "filters" {title: options}, "multi" and "ranges" (filter titles)."""
+    items: list[dict] = []
+    seen: set[str] = set()
+    for f in source_filters or []:
+        title = re.sub(r"\s+", " ", str(f.get("title") or "")).strip()[:255]
+        options = [str(o).strip() for o in f.get("options") or [] if str(o).strip()]
+        if len(options) < 2 or not title or slugify_code(title) in seen:
+            continue
+        seen.add(slugify_code(title))
+        items.append({"title": title, "options": options, "kind": infer_filter_display(title, options)})
+    base = {**proposal, "filters": {}, "multi": [], "ranges": [], "filter_attrs": []}
+    if not items:
+        return base
+    groups = [{"name": g["name"], "attributes": list(g["attributes"])} for g in proposal.get("groups", [])]
+    attrs = [(g["name"], a) for g in groups for a in g["attributes"]]
+    targets = plan_filter_targets(db, company_id, groups, specs, items) if db is not None and groups else {}
+    taken = {t for t in targets.values() if t[1]}
+    fallback = _match_filters_to_attrs([it for it in items if not targets.get(it["title"], ("", ""))[1]], attrs, taken)
+    chosen: list[dict] = []
+    for it in items:
+        grp, attr = targets.get(it["title"]) or ("", "")
+        if not attr:
+            grp, attr = fallback.get(it["title"]) or (grp, "")
+        new = False
+        if not attr:
+            words = _label_words(it["title"])
+            best = max(groups, key=lambda g: len(words & _label_words(g["name"])), default=None)
+            gname = grp or (best["name"] if best and words & _label_words(best["name"]) else KEY_FEATURE_GROUP)
+            target = next((g for g in groups if g["name"] == gname), None)
+            if target is None:
+                target = {"name": gname, "attributes": []}
+                groups.append(target)
+            attr = it["title"]
+            if slugify_code(attr) not in {slugify_code(a) for a in target["attributes"]}:
+                target["attributes"].append(attr)
+            grp, new = target["name"], True
+        chosen.append({**it, "group": grp, "attribute": attr, "new": new})
+    return {
+        **proposal,
+        "groups": groups,
+        "filter_attrs": chosen,
+        "filters": {c["title"]: c["options"] for c in chosen},
+        "multi": [c["title"] for c in chosen if c["kind"] == "multi_select"],
+        "ranges": [c["title"] for c in chosen if c["kind"] == "range"],
+    }
 
 
 def extend_profile_with_filters(db: Session, profile: CatalogAttributeProfile, unmatched: list[dict]) -> int:
@@ -751,13 +969,42 @@ def fill_multi_select(db: Session, product: CatalogProduct, profile: CatalogAttr
     if not fields:
         return 0
     blob = _canon_text(" ; ".join([extra_text,*[f"{i['label']} {i['value']}" for g in _clean_specs(specs) for i in g["items"]]]))
-    values: dict[str, str] = {}
+    chosen: dict[str, list[str]] = {}
     for f in fields:
         hits = []
         for option in f["options"]:
             pat = _option_pattern(option)
             if pat is not None and pat.search(blob):
                 hits.append(option)
+        chosen[f["id"]] = hits
+    # "4-zone RGB-backlight keyboard" is the option "Backlit Keyboard", "(Type C)" is "Type-C Port": the words differ, the meaning
+    # does not. The model picks from the ALLOWED options only; whatever it names that is not one of them is dropped.
+    try:
+        from app.services.catalog_ai.llm_extractor import generate_structured
+
+        field_lines = "\n".join(f"- id={f['id']} | {f['name']} | allowed options: {', '.join(f['options'])}" for f in fields)
+        rows = "\n".join(f"[{g['group']}] {i['label']}: {i['value']}" for g in _clean_specs(specs) for i in g["items"])[:12000]
+        data = generate_structured(
+            "Product: " + (extra_text or "") + "\n\nSource specifications:\n" + rows + "\n\nFor each field below pick EVERY allowed option "
+            "that this product has, judged by meaning (a backlight / RGB-backlight keyboard is 'Backlit Keyboard'; a USB Type C port "
+            "is 'Type-C Port'; an RJ45 LAN port is 'RJ45 LAN Port'). Use the options exactly as written, only when the specifications "
+            "support it - never guess. Leave a field out when none applies.\n\nFields:\n" + field_lines,
+            _MULTI_SCHEMA, db=db, company_id=product.company_id or "default",
+            system="You tag a product with the filter options its specifications support.",
+        )
+        by_id = {f["id"]: f for f in fields}
+        for row in data.get("values") or []:
+            f = by_id.get(str((row or {}).get("field_id") or ""))
+            if not f:
+                continue
+            for o in (row or {}).get("options") or []:
+                if o in f["options"] and o not in chosen[f["id"]]:
+                    chosen[f["id"]].append(o)
+    except Exception:  # noqa: BLE001 - option-text matching above still stands
+        pass
+    values: dict[str, str] = {}
+    for f in fields:
+        hits = [o for o in f["options"] if o in chosen[f["id"]]]  # the profile's own option order
         if hits:
             values[f["id"]] = ",".join(hits)
     return fill_product(db, product, profile, values, overwrite=False) if values else 0
@@ -771,6 +1018,7 @@ def create_profile(db: Session, *, company_id: str, proposal: dict, category_lab
         _unique_profile_code,
     )
 
+    on = {(e["group"], e["attribute"]): e for e in proposal.get("filter_attrs") or []}  # the attributes that are storefront filters
     payload = AttributeProfileBulkSaveRequest(
         profile_name=proposal["name"],
         groups=[
@@ -779,9 +1027,10 @@ def create_profile(db: Session, *, company_id: str, proposal: dict, category_lab
                 attributes=[
                     BulkAttributeItem(
                         name=a,
-                        field_type="multi_select" if a in (proposal.get("multi") or []) else None,
-                        filterable=a in (proposal.get("filters") or {}),
-                        predefined_values=list((proposal.get("filters") or {}).get(a, [])),
+                        field_type="multi_select" if on.get((g["name"], a), {}).get("kind") == "multi_select" else None,
+                        filterable=(g["name"], a) in on,
+                        filter_display_type=on.get((g["name"], a), {}).get("kind", "single_select"),
+                        predefined_values=list(on.get((g["name"], a), {}).get("options", [])),
                     )
                     for a in g["attributes"]
                 ],
@@ -885,7 +1134,7 @@ def apply_from_source(
         created = False
         if profile is None and create_profile_if_missing and has_category:
             names = _category_names(db, product)
-            proposal = attach_source_filters(propose_profile(names[0], specs), specs, source_filters or [])
+            proposal = attach_source_filters(propose_profile(names[0], specs), specs, source_filters or [], db=db, company_id=company_id)
             profile = create_profile(db, company_id=company_id or "default", proposal=proposal, category_labels=names[:3])
             created = True
         if profile is None:
@@ -900,12 +1149,13 @@ def apply_from_source(
                 fields = profile_fields(db, profile.id)
         # the profile is the product TYPE's (its category): every attribute is answered by the source row that means the same,
         # whatever that shop calls it - the attribute keeps its name, the value goes in, no second attribute is made
-        values, off, source_of = map_values_traced(db, company_id, specs, fields)
+        displays: dict[str, str] = {}
+        values, off, source_of = map_values_traced(db, company_id, specs, fields, context=product.name or "", displays=displays)
         filterable_off = {fid: v for fid, v in off.items() if next((f for f in fields if f["id"] == fid), {}).get("filterable")}
         added = add_options(db, filterable_off) if filterable_off else 0
         for fid, v in filterable_off.items():
             values[fid] = v
-        fill_product(db, product, profile, values, overwrite=replace)
+        fill_product(db, product, profile, values, overwrite=replace, displays=displays)
         multi = fill_multi_select(db, product, profile, specs, extra_text=product.name or "")
         product.custom_specs_json = _leftover_custom_json(db, profile.id, specs, {source_of[fid] for fid in values if fid in source_of})
         db.commit()

@@ -15,6 +15,7 @@ import {
 import { toast } from "sonner";
 import {
   FIELD_TYPE_LABELS,
+  ensureSortOrder,
   type AttributeGroup,
   type AttributeSpec,
 } from "@/lib/mock-data/attribute-profiles";
@@ -43,7 +44,9 @@ function moveItem<T extends { id: string }>(items: T[], id: string, dir: -1 | 1)
 
 export function SpecificationProfileBuilder({ profileId }: Props) {
   const profile = useAttributeProfileStore((s) => s.getProfileById(profileId));
-  const groups = useAttributeProfileStore((s) => s.getGroupsForProfile(profileId));
+  // select the stored array and derive the profile's groups here: a selector that builds a new array on every call never settles (React 19 + zustand 5: "Maximum update depth exceeded")
+  const allGroups = useAttributeProfileStore((s) => s.groups);
+  const groups = useMemo(() => ensureSortOrder(allGroups.filter((g) => g.profileId === profileId)), [allGroups, profileId]);
   const allAttributes = useAttributeProfileStore((s) => s.attributes);
   const upsertGroup = useAttributeProfileStore((s) => s.upsertGroup);
   const reorderGroups = useAttributeProfileStore((s) => s.reorderGroups);

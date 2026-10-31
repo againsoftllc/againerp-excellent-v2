@@ -29,6 +29,23 @@ export type MarkdownLiteProps = {
 
 type OpenDocument = MarkdownLiteProps["onOpenDocument"];
 
+// The model sometimes writes an admin screen with a made-up domain (the source shop's, e.g. https://www.startech.com.bd/website/specifications/profiles/<id>).
+// These paths only exist in this admin, so such a link is opened here, on this site.
+const ADMIN_SCREEN = /^\/website\/(specifications|products|attributes|categories|brands)(\/|\?|$)/;
+function adminPath(href: string): string {
+  // a profile's own page (/website/specifications/profiles/<id>) is the old mock-data screen; real profiles open on the Attributes page
+  const profileScreen = (p: string) => p.replace(/^\/website\/specifications\/profiles\/([\w-]+)\/?$/, "/website/attributes?view=$1");
+  if (!/^https?:\/\//i.test(href)) return profileScreen(href);
+  try {
+    const u = new URL(href);
+    if (typeof window !== "undefined" && u.host === window.location.host) return profileScreen(u.pathname) + (u.search || "");
+    if (ADMIN_SCREEN.test(u.pathname)) return profileScreen(u.pathname) + (u.search || "");
+  } catch {
+    /* keep as written */
+  }
+  return href;
+}
+
 function CodeBlock({ lang, code }: { lang: string; code: string }) {
   const [copied, setCopied] = useState(false);
   return (
@@ -94,7 +111,7 @@ function inline(text: string, keyPrefix: string, openDocument?: OpenDocument): R
       );
     } else if (tok.startsWith("[")) {
       const label = tok.slice(1, tok.indexOf("]"));
-      const href = m[7];
+      const href = adminPath(m[7]);
       if (href.startsWith("doc://")) {
         const open = openDocument;
         out.push(

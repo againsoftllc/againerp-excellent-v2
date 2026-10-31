@@ -66,6 +66,8 @@ _seo_cache: dict[str, tuple[float, dict]] = {}
 # add_product_specs: "<product id>|<profile name>" → the profile plan + mapped values shown in
 # the preview (LLM mapping), reused on confirm.
 _spec_cache: dict[str, tuple[float, dict]] = {}
+# create_spec_profile_from_links: "<category url>|<product url>|<profile name>" → the proposal shown in the preview, reused on confirm.
+_profile_link_cache: dict[str, tuple[float, dict]] = {}
 
 def _cache_get(url: str) -> Optional[CatalogAiExtractResponse]:
     entry = _extract_cache.get(url)
@@ -489,6 +491,110 @@ def build_catalog_import_tools(*, db: Session | None, company_id: str | None, us
             ),
         }
 
+    def create_spec_profile_from_links(inp: dict) -> dict:
+        """A specification profile from TWO links: the source shop's category page (its storefront filters) and one product
+        page of that category (its spec table). No product is created - only the profile."""
+        if not _can_write_catalog(db, user):
+            return {"error": "Creating a specification profile needs catalog write permission."}
+        category_url = str(inp.get("category_url") or "").strip()
+        product_url = str(inp.get("product_url") or "").strip()
+        for label, u in (("category_url", category_url), ("product_url", product_url)):
+            if not u.lower().startswith(("http://", "https://")):
+                return {"error": f"{label} must be a full link starting with http:// or https://. A profile needs one category page link (for the filters) and one product page link (for the specifications)."}
+        if category_url.rstrip("/") == product_url.rstrip("/"):
+            return {"error": "Those two links are the same page. Give the category (listing) page AND one product page of that category."}
+        name = re.sub(r"\s+", " ", str(inp.get("profile_name") or "")).strip()[:255]
+        confirming = bool(inp.get("confirm"))
+        key = f"{category_url}|{product_url}|{name.lower()}"
+        entry = _profile_link_cache.get(key) if confirming else None
+        plan = entry[1] if entry and time.time() - entry[0] <= _EXTRACT_CACHE_TTL_SECONDS else None
+        if plan is None:
+            extracted = _cache_get(product_url)
+            if extracted is None:
+                try:
+                    extracted = extract_from_url(db, product_url, company_id=company_id)  # type: ignore[arg-type]
+                except HTTPException as exc:
+                    db.rollback()  # type: ignore[union-attr]
+                    return {"error": exc.detail}
+                except Exception as exc:  # noqa: BLE001
+                    db.rollback()  # type: ignore[union-attr]
+                    return {"error": f"Could not read the product page: {exc}"}
+                _cache_set(product_url, extracted)
+            d = extracted.draft
+            specs = spec_profile_service.specs_from_draft(d)
+            if not spec_profile_service.spec_item_count(specs):
+                return {"error": "No specification table was found on the product page - give a product page (not a category page) that lists its specifications."}
+            from app.services.catalog_ai.scraper import fetch_category_filters
+
+            filters = fetch_category_filters(category_url)
+            name = name or (d.category_name or "").strip() or "General"
+            exists = db.query(CatalogAttributeProfile).filter(CatalogAttributeProfile.name.ilike(name)).first()  # type: ignore[union-attr]
+            if exists is not None:
+                return {"error": f"A specification profile named '{exists.name}' already exists. Pick another name, or use it as it is."}
+            proposal = spec_profile_service.attach_source_filters(
+                spec_profile_service.propose_profile(name, specs), specs, filters, db=db, company_id=company_id  # type: ignore[arg-type]
+            )
+            if not proposal["groups"]:
+                return {"error": "The product page's specification table was empty - nothing to build a profile from."}
+            warnings = []
+            if not filters:
+                warnings.append("No filters could be read from the category page (the shop may block the server or the link is not a category listing) - the profile will have no storefront filters.")
+            plan = {"proposal": proposal, "labels": [d.category_name] if d.category_name else [], "warnings": warnings, "product": d.name}
+            if len(_profile_link_cache) > 50:
+                _profile_link_cache.clear()
+            _profile_link_cache[key] = (time.time(), plan)
+        proposal = plan["proposal"]
+        filters_out = [
+            {
+                "filter": e["title"],
+                "on_attribute": f"{e['group']} > {e['attribute']}" + (" (new attribute)" if e["new"] else ""),
+                "type": e["kind"],
+                "options": len(e["options"]),
+                "sample": e["options"][:5],
+            }
+            for e in (proposal.get("filter_attrs") or [])
+        ]
+        if not confirming:
+            return {
+                "status": "preview",
+                "preview": {
+                    "action": "Create specification profile (no product is created)",
+                    "profile_name": proposal["name"],
+                    "applies_to_categories": plan["labels"] or ["(set later in Website → Specifications)"],
+                    "groups": {g["name"]: len(g["attributes"]) for g in proposal["groups"]},
+                    "fields": sum(len(g["attributes"]) for g in proposal["groups"]),
+                    "storefront_filters": filters_out,
+                    "spec_source": plan["product"],
+                    "warnings": plan["warnings"],
+                },
+                "note": CONFIRM_NOTE
+                + " Show the groups and ALL storefront_filters (filter, the attribute it sits on, type, option count). Say which link the specs came from and which the filters.",
+            }
+        try:
+            profile = spec_profile_service.create_profile(
+                db,  # type: ignore[arg-type]
+                company_id=company_id or "default",
+                proposal=proposal,
+                category_labels=plan["labels"],
+            )
+        except HTTPException as exc:
+            db.rollback()  # type: ignore[union-attr]
+            return {"error": exc.detail}
+        db.commit()  # type: ignore[union-attr]
+        _profile_link_cache.pop(key, None)
+        return {
+            "status": "created",
+            "document": "Specification profile",
+            "id": profile.id,
+            "name": profile.name,
+            "groups": len(proposal["groups"]),
+            "fields": sum(len(g["attributes"]) for g in proposal["groups"]),
+            "storefront_filters": filters_out,
+            "path": f"/website/attributes?view={profile.id}",
+            "open_link": f"[Open in Attributes](/website/attributes?view={profile.id})",
+            "note": "Show the link EXACTLY as open_link (a path on this admin - never put a website domain such as the source shop's in front of it). The profile exists now. Products pick it up through their category; a product's filter values are filled when its specifications are added (add_product_specs / fill_product_from_source).",
+        }
+
     def _spec_result(row: CatalogProduct, extracted: CatalogAiExtractResponse) -> dict:
         count = spec_profile_service.spec_item_count(spec_profile_service.specs_from_draft(extracted.draft))
         if not count:
@@ -588,6 +694,20 @@ def build_catalog_import_tools(*, db: Session | None, company_id: str | None, us
             _cache_set(product.source_url, extracted)
         return spec_profile_service.specs_from_draft(extracted.draft)
 
+    def _source_filters(product: CatalogProduct) -> list[dict]:
+        """The source shop's storefront filters for this product's category (its breadcrumb's category pages) - the new profile's Overview."""
+        if not product.source_url:
+            return []
+        extracted = _cache_get(product.source_url)
+        if extracted is None:
+            try:
+                extracted = extract_from_url(db, product.source_url, company_id=company_id)  # type: ignore[arg-type]
+            except Exception:  # noqa: BLE001
+                db.rollback()  # type: ignore[union-attr]
+                return []
+            _cache_set(product.source_url, extracted)
+        return list(extracted.draft.source_filters or [])
+
     def _spec_key(product: CatalogProduct, profile_name: str) -> str:
         # profile_name only matters when a new profile would be created — models add or drop it
         # freely between preview and confirm, which must not force a fresh (LLM) mapping.
@@ -612,7 +732,9 @@ def build_catalog_import_tools(*, db: Session | None, company_id: str | None, us
             plan = {"profile_id": profile.id, "profile": profile.name, "fields": fields, "values": values, "off": off}
         else:
             name = profile_name.strip() or product.category or "General"
-            proposal = spec_profile_service.propose_profile(name, specs)
+            proposal = spec_profile_service.attach_source_filters(
+                spec_profile_service.propose_profile(name, specs), specs, _source_filters(product), db=db, company_id=company_id  # type: ignore[arg-type]
+            )
             if not proposal["groups"]:
                 return {"error": "The source specifications are empty — nothing to build a profile from."}
             plan = {"profile_id": None, "proposal": proposal, "specs": specs}
@@ -687,7 +809,17 @@ def build_catalog_import_tools(*, db: Session | None, company_id: str | None, us
                 "applies_to_categories": category_labels or ["(set later in Website → Specifications)"],
                 "groups": {g["name"]: g["attributes"] for g in proposal["groups"]},
                 "fields": sum(len(g["attributes"]) for g in proposal["groups"]),
-                "note": "Creates a new specification profile for everyone; all fields are text and not filterable — adjust them later in Website → Specifications → Profiles.",
+                "storefront_filters": [
+                    {"filter": e["title"], "on": f"{e['group']} > {e['attribute']}", "new_attribute": e["new"], "type": e["kind"], "options": len(e["options"])}
+                    for e in (proposal.get("filter_attrs") or [])
+                ],
+                "note": (
+                    "Creates a new specification profile for everyone. The spec rows are fields of their groups; "
+                    f"{len(proposal.get('filter_attrs') or [])} of them are the storefront filters of the source shop's category (filterable, with the shop's options) "
+                    "- no separate filter group, so nothing is listed twice. Adjust them later in Website → Specifications → Profiles."
+                    if proposal.get("filters")
+                    else "Creates a new specification profile for everyone; the source shop's category page gave no filters, so all fields are text and not filterable — adjust them later in Website → Specifications → Profiles."
+                ),
             }
             if not inp.get("confirm"):
                 return {"status": "preview", "preview": summary, "note": CONFIRM_NOTE}
@@ -707,8 +839,11 @@ def build_catalog_import_tools(*, db: Session | None, company_id: str | None, us
                 return {"error": exc.detail}
             # The profile was built from these same specs, so labels match its fields exactly.
             fields = spec_profile_service.profile_fields(db, profile.id)  # type: ignore[arg-type]
-            values = spec_profile_service.exact_values(plan["specs"], fields)
-            written = spec_profile_service.fill_product(db, product, profile, values)  # type: ignore[arg-type]
+            # spec rows by exact label; each Overview filter gets the option this product falls under
+            shown: dict[str, str] = {}
+            values, _off, _src = spec_profile_service.map_values_traced(db, company_id, plan["specs"], fields, context=product.name or "", displays=shown)  # type: ignore[arg-type]
+            written = spec_profile_service.fill_product(db, product, profile, values, displays=shown)  # type: ignore[arg-type]
+            written += spec_profile_service.fill_multi_select(db, product, profile, plan["specs"], extra_text=product.name or "")  # type: ignore[arg-type]
         _spec_cache.pop(key, None)
         db.commit()  # type: ignore[union-attr]
         return {
@@ -819,7 +954,9 @@ def build_catalog_import_tools(*, db: Session | None, company_id: str | None, us
                     "confirm=true. If the preview's 'warnings' list says this URL was already imported, tell the user "
                     "plainly and ask whether they still want a duplicate before calling confirm=true — do not silently "
                     "proceed. Use for 'import this product', 'upload this from the link', 'add this to our "
-                    "catalog'."
+                    "catalog'. A CATEGORY / listing link (many products) is not a product page - when the user gives a "
+                    "category link together with a product link and asks for an attribute / specification profile, use "
+                    "create_spec_profile_from_links instead."
                 ),
                 input_schema={
                     "type": "object",
@@ -901,6 +1038,37 @@ def build_catalog_import_tools(*, db: Session | None, company_id: str | None, us
                 },
             ),
             handler=add_product_specs,
+            risk_tier=RiskTier.WRITE,
+            module="catalog",
+        ),
+        OrchestratorTool(
+            definition=AIToolDefinition(
+                name="create_spec_profile_from_links",
+                description=(
+                    "Create a SPECIFICATION (attribute) PROFILE - and only the profile, no product - from two links: a CATEGORY page of "
+                    "a source shop (e.g. https://www.startech.com.bd/neckband - its sidebar filters become filters ON the profile's "
+                    "spec attributes, no separate filter group) and ONE PRODUCT page of that category (its spec table becomes the spec groups and fields). Use when "
+                    "the user gives a category link plus a product link and asks for an attribute / specification profile ('category theke "
+                    "filter and product theke attribute niye profile baniye felo', optionally with a name such as 'Neckband Specification'). "
+                    "NEVER use import_product_from_url for these - a category link is not a product. Take the user's profile name exactly "
+                    "as given. CALL FIRST without confirm, show the preview (groups, field count, every storefront filter with its type and "
+                    "option count), then call again with the same arguments and confirm=true only after the user agrees."
+                ),
+                input_schema={
+                    "type": "object",
+                    "properties": {
+                        "category_url": {"type": "string", "description": "The category / listing page link (has the filter sidebar)"},
+                        "product_url": {"type": "string", "description": "One product page link of that category (has the specification table)"},
+                        "profile_name": {"type": "string", "description": "The profile's name as the user wrote it (e.g. 'Neckband Specification'); defaults to the product's category"},
+                        "confirm": {
+                            "type": "boolean",
+                            "description": "false/omitted = preview only (nothing written). true = create - ONLY after the user has explicitly confirmed the preview.",
+                        },
+                    },
+                    "required": ["category_url", "product_url"],
+                },
+            ),
+            handler=create_spec_profile_from_links,
             risk_tier=RiskTier.WRITE,
             module="catalog",
         ),

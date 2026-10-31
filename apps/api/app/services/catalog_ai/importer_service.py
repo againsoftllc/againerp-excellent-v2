@@ -514,12 +514,24 @@ def extract_from_url(
     # profile can be created with them.
     try:
         if draft.specifications and crumb_cat:
-            links = {str(l.get("name")).strip().lower(): l.get("url") for l in (page.structured.get("breadcrumb_links") or [])}
-            cat_url = links.get(crumb_cat.strip().lower())
-            if cat_url:
-                from app.services.catalog_ai.scraper import fetch_category_filters
+            # every category level on the breadcrumb (Laptop > Gaming Laptop), minus Home, the brand page and the product itself,
+            # down to the product's own category: the profile is the product TYPE's, so it takes the union of their filters
+            brand_key = _cat_key(draft.brand_name or "")
+            name_key = _cat_key(draft.name)
+            crumb_key = _cat_key(crumb_cat)
+            trail_urls: list[str] = []
+            for l in page.structured.get("breadcrumb_links") or []:
+                k = _cat_key(str(l.get("name") or ""))
+                if not k or k == "home" or k == brand_key or k == name_key or (len(k) > 20 and k[:20] == name_key[:20]):
+                    continue
+                if l.get("url"):
+                    trail_urls.append(str(l["url"]))
+                if k == crumb_key:
+                    break
+            if trail_urls:
+                from app.services.catalog_ai.scraper import fetch_trail_filters
 
-                draft = draft.model_copy(update={"source_filters": fetch_category_filters(cat_url)})
+                draft = draft.model_copy(update={"source_filters": fetch_trail_filters(trail_urls)})
     except Exception:  # noqa: BLE001 - filters are a bonus
         pass
 

@@ -27,6 +27,7 @@ import {
   List,
   Loader2,
   Pencil,
+  PenLine,
   Plus,
   Sparkles,
   X,
@@ -1261,6 +1262,34 @@ function FilterListEditor({
 function CompactValueInput({ attr, value, onChange, predefinedValues, displayValue = "", onDisplayChange }: { attr: AttributeSpec; value: string; onChange: (v: string) => void; predefinedValues?: string[]; displayValue?: string; onDisplayChange?: (v: string) => void }) {
   const effectivePredefined = predefinedValues ?? attr.predefinedValues ?? [];
   const cls = "h-6 py-0 leading-6 text-[11px]";
+  // A filter attribute's value is the shop-filter option ("Intel Core i7"); the pencil opens a box for the text the product page
+  // shows instead ("Core i7 14650HX"). The filter keeps using the option, the spec table shows the typed text.
+  const [overrideOpen, setOverrideOpen] = useState(false);
+  const canOverride = Boolean(value) && Boolean(onDisplayChange);
+  const overrideShown = canOverride && (overrideOpen || Boolean(displayValue));
+  const overrideToggle = canOverride ? (
+    <button
+      type="button"
+      title={displayValue ? "Product page shows a different text — click to edit" : "Show a different text on the product page"}
+      aria-label="Show a different text on the product page"
+      onClick={() => setOverrideOpen((v) => !v)}
+      className={cn(
+        "flex h-6 w-6 shrink-0 items-center justify-center rounded-none border transition-colors",
+        displayValue ? "border-primary bg-primary/10 text-primary" : "border-input bg-background text-muted-foreground hover:border-primary/50 hover:text-primary",
+      )}
+    >
+      <PenLine className="h-3 w-3" />
+    </button>
+  ) : null;
+  const overrideBox = overrideShown ? (
+    <input
+      type="text"
+      value={displayValue}
+      onChange={(e) => onDisplayChange?.(e.target.value)}
+      placeholder={`Shown on the product page instead of "${value}" (the filter keeps "${value}")`}
+      className="h-6 w-full rounded-none border border-input bg-background px-1.5 text-[11px] outline-none focus:border-primary"
+    />
+  ) : null;
 
   // Range: pick one of the listed ranges (this is what the shop filter uses), then type the exact figure for the spec table.
   if (attr.filterDisplayType === "range" && effectivePredefined.length) {
@@ -1306,22 +1335,28 @@ function CompactValueInput({ attr, value, onChange, predefinedValues, displayVal
     // a stored value that isn't an option (e.g. imported text) stays visible and is kept on save
     const choices = [...effectivePredefined, ...selected.filter((s) => !effectivePredefined.includes(s))];
     return (
-      <div className="flex flex-wrap gap-1">
-        {choices.map((opt) => (
-          <button
-            key={opt}
-            type="button"
-            onClick={() => toggle(opt)}
-            className={cn(
-              "rounded-none border px-1.5 py-px text-[10px] transition-colors",
-              selected.includes(opt)
-                ? "border-primary bg-primary text-primary-foreground"
-                : "border-input bg-background hover:border-primary/50",
-            )}
-          >
-            {opt}
-          </button>
-        ))}
+      <div className="space-y-1">
+        <div className="flex items-start gap-1">
+          <div className="flex min-w-0 flex-1 flex-wrap gap-1">
+            {choices.map((opt) => (
+              <button
+                key={opt}
+                type="button"
+                onClick={() => toggle(opt)}
+                className={cn(
+                  "rounded-none border px-1.5 py-px text-[10px] transition-colors",
+                  selected.includes(opt)
+                    ? "border-primary bg-primary text-primary-foreground"
+                    : "border-input bg-background hover:border-primary/50",
+                )}
+              >
+                {opt}
+              </button>
+            ))}
+          </div>
+          {overrideToggle}
+        </div>
+        {overrideBox}
       </div>
     );
   }
@@ -1329,12 +1364,20 @@ function CompactValueInput({ attr, value, onChange, predefinedValues, displayVal
   if ((attr.isFilterable || attr.fieldType === "dropdown" || attr.fieldType === "radio") && effectivePredefined.length) {
     const options = value && !effectivePredefined.includes(value) ? [...effectivePredefined, value] : effectivePredefined;
     return (
-      <Select value={value} onChange={(e) => onChange(e.target.value)} className={cls}>
-        <option value="">Select…</option>
-        {options.map((opt) => (
-          <option key={opt} value={opt}>{opt}</option>
-        ))}
-      </Select>
+      <div className="space-y-1">
+        <div className="flex items-center gap-1">
+          <div className="min-w-0 flex-1">
+            <Select value={value} onChange={(e) => onChange(e.target.value)} className={cls}>
+              <option value="">Select…</option>
+              {options.map((opt) => (
+                <option key={opt} value={opt}>{opt}</option>
+              ))}
+            </Select>
+          </div>
+          {overrideToggle}
+        </div>
+        {overrideBox}
+      </div>
     );
   }
 

@@ -268,6 +268,33 @@ def fetch_category_filters(url: str, *, timeout: float = 20.0) -> list[dict]:
         return []
 
 
+def merge_filters(*lists: list[dict]) -> list[dict]:
+    """Union of several filter lists by title (case-insensitive): the first list's titles and option order win, later lists
+    only add options / titles they have extra."""
+    out: list[dict] = []
+    index: dict[str, dict] = {}
+    for lst in lists:
+        for f in lst or []:
+            key = re.sub(r"\s+", " ", str(f.get("title") or "")).strip().lower()
+            if not key:
+                continue
+            hit = index.get(key)
+            if hit is None:
+                hit = {"title": f["title"], "options": []}
+                index[key] = hit
+                out.append(hit)
+            for o in f.get("options") or []:
+                if o not in hit["options"]:
+                    hit["options"].append(o)
+    return out
+
+
+def fetch_trail_filters(urls: list[str], *, max_pages: int = 4) -> list[dict]:
+    """Filters of every category page on the product's breadcrumb, broadest first: "Laptop" lists all processors, RAM sizes ...
+    while its sub-category "Gaming Laptop" only those it has - the profile belongs to the product type, so it gets the union."""
+    return merge_filters(*[fetch_category_filters(u) for u in urls[:max_pages]])
+
+
 _SIZE_SUFFIX_RE = re.compile(r"[-_](\d{2,4})x(\d{2,4})(?=\.[a-zA-Z]{2,4}$)")
 
 

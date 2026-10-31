@@ -55,7 +55,9 @@ CATALOG = (
     "Products: import_product_from_url imports a product from another website's page (a missing brand / category is created on confirm); after it "
     "creates a product, ask in plain text whether to generate SEO, and the moment they say yes CALL add_product_seo WITHOUT confirm - never type the "
     "Focus Keyphrase / Meta title / Meta description yourself; confirm only that tool's own preview. Specifications: add_product_specs (reads the "
-    "product's source page and fills its profile; a new profile needs the user's approval). To change anything else on an existing product (name, price, "
+    "product's source page and fills its profile; a new profile needs the user's approval). When the user gives a source shop's CATEGORY link plus a "
+    "product link and wants an attribute / specification profile, CALL create_spec_profile_from_links WITHOUT confirm (the category link gives the "
+    "storefront filters, the product link the spec fields; no product is created) - never import_product_from_url for that. To change anything else on an existing product (name, price, "
     "descriptions, tags, warranty, categories, brand, status) use update_product: fields the user wants you to WRITE go in its `rewrite` list, only values "
     "the user typed go in `changes`. Product tools take the product's name, SKU or id and find it themselves - when the user names a catalog product "
     "call the tool right away; ask for a URL only to import a new product. To save a company rule for how the AI writes a field use save_ai_preset."
@@ -63,7 +65,7 @@ CATALOG = (
 
 _FORECAST_TOOLS = {"forecast_sales", "predict_stockouts", "forecast_cash_flow", "forecast_item_demand", "forecast_collections", "forecast_expenses_profit", "forecast_pipeline", "detect_dead_stock"}
 _IMAGE_TOOLS = {"generate_product_image", "edit_product_image", "attach_image_to_product"}
-_CATALOG_TOOLS = {"import_product_from_url", "add_product_seo", "add_product_specs", "fill_product_from_source", "update_product", "save_ai_preset"}
+_CATALOG_TOOLS = {"import_product_from_url", "create_spec_profile_from_links", "add_product_seo", "add_product_specs", "fill_product_from_source", "update_product", "save_ai_preset"}
 # the data-changing tools (the action protocol applies when any of them is available)
 _ACTION_TOOLS = {
     "create_sales_quotation", "create_sales_order", "create_purchase_order", "create_crm_task", "create_crm_lead", "update_lead_status",
