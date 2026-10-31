@@ -8,6 +8,7 @@ preset or, without one, DEFAULT_SEO_RULE. `default_seo` is the no-LLM fallback.
 
 from __future__ import annotations
 
+import re
 from typing import Optional
 
 from fastapi import HTTPException
@@ -191,6 +192,10 @@ def fill_on_import(db: Session, company_id: Optional[str], product: CatalogProdu
     the focus keyphrase is never left empty). Never raises. Caller commits."""
     try:
         values = {**default_seo(db, company_id, product), **write_seo(db, company_id, product)}
+        # the description was written around the keyphrase the slug rule gives; keep it so the page says the same thing everywhere
+        dk = _keyphrase_for_slug(product, " ".join(w for w in [product.brand, product.model] if w) or product.name or "")
+        if dk and product.description and dk.lower() in re.sub(r"<[^>]+>", " ", product.description).lower():
+            values["focus_keyphrase"] = dk
         values = enforce_checklist(product, values)
     except Exception:  # noqa: BLE001 — SEO is a bonus, never a reason to fail an import
         db.rollback()

@@ -135,16 +135,21 @@ unavailable: the page's highlights with model / MPN lines removed, cut or topped
 
 ## A10. Description
 
+The description is written on every import - with the company's `catalog.product.description` preset when it has one, with the built-in rule (`DEFAULT_DESCRIPTION_RULE`) when not - and CHECKED in code (`description_writer.failures`); a failing text is rewritten up to 3 times with the failed checks named.
+
 | Rule | Today |
 |------|-------|
-| **Never a copy-paste** — rewrite the source description so the content is **unique** | ✅ **done (2026-10-17):** with the description preset a second model pass *writes* the text (`description_writer.py`) |
-| **Minimum 300 words** | ✅ checked and rewritten until it passes; the prompt aims for 350-550 words and tells the model not to pad (tests: 404-441 words) |
-| The **focus keyphrase appears in the first paragraph** | ✅ checked (keyphrase = brand + model) |
-| Structure: **2 × H2 and 3 × H3 headings** (minimum) | ✅ checked (test: 5 × H2, 3 × H3) |
-| **At least 2 internal links** (to our brand / category / related product pages) | ⬜ |
-| SEO friendly, natural, no seller name, no invented facts (use only the source's facts) | 🟡 seller name scrub ✅ |
+| **Never a copy-paste** - the source is only a fact sheet | ✅ |
+| **Minimum 300 words** (aim 350-550, no padding) | ✅ checked |
+| The **focus keyphrase** (the same one the SEO fields use: brand + model that is inside the URL slug) is in the **first paragraph** and in **at least one H2/H3** | ✅ checked |
+| Structure: **2 x H2 and 3 x H3 at least**, no H1 (the product title is the only H1), only p / h2 / h3 / ul / li / strong / a | ✅ checked |
+| A **"Frequently Asked Questions"** H2 with at least 2 H3 questions ending with "?", answered from the facts | ✅ checked |
+| **At least 2 internal links** to pages of OUR storefront: the category and its parent `/<category-slug>`, the brand's own page `/<brand-slug>` (e.g. `/toshiba` - the storefront serves a brand page at its slug; if a brand slug equals a category slug the link is `/<category-slug>?brand=<Brand>`) and up to 2 related published products `/<product-slug>`. The slug is the one of the category / brand we have, or the one Aladin will give a new one when it creates it (same rule); after the product exists `repair_links` re-checks every link against the real slugs (swaps a changed brand / category slug, points a link at the product's own category when it names another one, unlinks what matches nothing). The category is read from the source breadcrumb BEFORE the text is written. There are no /brand/ or /category/ routes | ✅ `internal_links`, `repair_links` |
+| SEO friendly, natural, no seller name, no invented facts, no prices | ✅ |
 | Images from the source description are uploaded to our server and placed in the text | ⬜ |
 | **YouTube video** from the source is added to the product | ⬜ |
+
+The admin's SEO panel scores the finished product out of 100 (see A13): the description now has its own checks there (300+ words, headings, 2+ links to our pages).
 
 ## A11. Specifications and filters
 
@@ -189,9 +194,12 @@ The admin's SEO panel scores each product out of 100. The import writes the fiel
 | Keyphrase | Keyphrase in product description | 5 | already in the first paragraph; added there if missing |
 | Meta | Meta title is set / length | 5 + 10 | **30–60 characters**, ends with “Price in BD” |
 | Meta | Meta description is set / length | 5 + 10 | **120–160 characters** (aim 150–155), key specs + call to action |
-| Content | Product description is set | 10 | ≥ 300 words (A10) |
-| Content | Short description is set | 5 | 4 bullets (A9) |
-| Content | Product has images | 10 | all source images (A1) |
+| Content | Product description is set | 3 | written (A10) |
+| Content | Description has 300+ words | 5 | ≥ 300 words (A10) |
+| Content | Description has 2+ H2 and 3+ H3 | 5 | structure (A10) |
+| Content | Description links to 2+ of our pages | 4 | internal links (A10) |
+| Content | Short description is set | 3 | 4 bullets (A9) |
+| Content | Product has images | 5 | all source images (A1) |
 | Technical | URL slug is set / readable | 5 + 5 | lowercase, hyphens (A3) |
 | Technical | Product category is assigned | — | the source's category (A4) |
 

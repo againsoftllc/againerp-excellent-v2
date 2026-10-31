@@ -64,6 +64,14 @@ def _catalog_brands(db: Session, company_id: str):
     )
 
 
+def _find_brand(db: Session, company_id: str, name: str) -> Optional[CatalogBrand]:
+    """The brand of that name in ANY channel, the oldest first. The shop's own brands (Acer, Logitech ...) sit in the "dropshipping" channel;
+    looking only at "catalog" never found them and created a second "Acer" (slug acer-2) with every import."""
+    rows = db.query(CatalogBrand).filter(CatalogBrand.company_id == company_id, CatalogBrand.name.ilike((name or "").strip())).all()
+    rows.sort(key=lambda b: (b.created_at is None, b.created_at))
+    return rows[0] if rows else None
+
+
 def _catalog_categories(db: Session, company_id: str):
     return db.query(CatalogCategory).filter(
         CatalogCategory.company_id == company_id, CatalogCategory.channel == IMPORT_CHANNEL
@@ -331,18 +339,43 @@ def _cat_key(text: str) -> str:
     return k[:-1] if len(k) > 3 and k.endswith("s") else k
 
 
-def _category_from_breadcrumb(db: Session, company_id: str, crumbs: list[str], draft: ProductDraft) -> Optional[str]:
+def _crumb_words(text: str) -> set[str]:
+    return {w for w in re.findall(r"[a-z0-9.]+", (text or "").lower()) if len(w) > 1}
+
+
+def _is_product_crumb(name: str, draft_name: str) -> bool:
+    """A breadcrumb entry that is the product's own title - written longer or shorter than the title we keep (the shop's
+    "Toshiba S300 2TB 5400rpm 3.5" Surveillance Hard Drive" vs our "Toshiba S300 2TB Surveillance Hard Drive"). Only a long entry
+    (5+ words) can be one: a category name is short."""
+    a, b = _crumb_words(name), _crumb_words(draft_name)
+    if len(a) < 5 or not b:
+        return False
+    inter = len(a & b)
+    return inter / min(len(a), len(b)) >= 0.8 or inter / len(a | b) >= 0.6
+
+
+def _category_from_breadcrumb(
+    db: Session, company_id: str, crumbs: list[str], draft: ProductDraft, *, links: Optional[list[dict]] = None, source_url: str = ""
+) -> Optional[str]:
     """The category the SOURCE shop files the product under: its breadcrumb, deepest first, minus "Home", the brand
     page and the product's own title. The deepest crumb that is one of OUR categories wins; with none of them known the
     deepest crumb is proposed as the (new) category. None when the page has no usable trail."""
     brand_key = _cat_key(draft.brand_name or "")
     name_key = _cat_key(draft.name)
+    own_path = urlparse(source_url or "").path.rstrip("/")
+    own_crumbs = {  # the entry whose link is this very page is the product, whatever its text says
+        _cat_key(str(l.get("name") or ""))
+        for l in (links or [])
+        if own_path and urlparse(str(l.get("url") or "")).path.rstrip("/") == own_path
+    }
     trail = []
     for c in crumbs:
         k = _cat_key(c)
         if not k or k == "home" or k == brand_key:
             continue
-        if k == name_key or (len(k) > 20 and k[:20] == name_key[:20]):  # the product's own title (last crumb)
+        if k in own_crumbs or _is_product_crumb(c, draft.name):  # the product's own title (last crumb)
+            continue
+        if k == name_key or (len(k) > 20 and k[:20] == name_key[:20]):
             continue
         trail.append(c.strip())
     if not trail:
@@ -481,6 +514,19 @@ def extract_from_url(
     except Exception:  # noqa: BLE001 - a price read must never fail the import
         pass
 
+    # Rule A4: the category is the one the source shop itself files the product under (its breadcrumb), mapped to OUR
+    # category of the same name; the model's own guess is only the fallback for pages without a trail.
+    try:
+        crumb_cat = _category_from_breadcrumb(
+            db, company_id, list(page.structured.get("breadcrumb") or []), draft,
+            links=list(page.structured.get("breadcrumb_links") or []), source_url=getattr(page, "url", "") or "",
+        )
+    except Exception:  # noqa: BLE001
+        crumb_cat = None
+    if crumb_cat:
+        draft = draft.model_copy(update={"category_name": crumb_cat, "category_names": []})
+
+    # (Rule A4 runs before Rule A10 - the description is written: its links to our category / brand pages need the real category, not the model's guess)
     # Rule A10 (docs/AI/product-upload.md): with a `catalog.product.description` preset the description is WRITTEN
     # (original, >= 300 words, keyphrase in the first paragraph, 2 h2 + 3 h3) and checked — not copied from the page.
     try:
@@ -500,15 +546,6 @@ def extract_from_url(
         short = None
     if short:
         draft = draft.model_copy(update={"short_description": "\n".join(short)})
-
-    # Rule A4: the category is the one the source shop itself files the product under (its breadcrumb), mapped to OUR
-    # category of the same name; the model's own guess is only the fallback for pages without a trail.
-    try:
-        crumb_cat = _category_from_breadcrumb(db, company_id, list(page.structured.get("breadcrumb") or []), draft)
-    except Exception:  # noqa: BLE001
-        crumb_cat = None
-    if crumb_cat:
-        draft = draft.model_copy(update={"category_name": crumb_cat, "category_names": []})
 
     # No specification profile for this category yet: read the source shop's filters for it (its category page), so the
     # profile can be created with them.
@@ -539,7 +576,7 @@ def extract_from_url(
     matched_brand_id = None
 
     if draft.brand_name:
-        brand = _catalog_brands(db, company_id).filter(CatalogBrand.name.ilike(draft.brand_name)).first()
+        brand = _find_brand(db, company_id, draft.brand_name)
         if brand:
             matched_brand_id = brand.id
         else:
@@ -628,7 +665,7 @@ def _unique_sku(db: Session, base: str, identity_svc: ItemIdentityService) -> st
 
 
 def _resolve_or_create_brand(db: Session, name: str, company_id: str) -> str:
-    existing = _catalog_brands(db, company_id).filter(CatalogBrand.name.ilike(name)).first()
+    existing = _find_brand(db, company_id, name)
     if existing:
         return existing.id
     brand = CatalogBrand(
@@ -991,6 +1028,17 @@ def create_product_from_draft(
             create_profile_if_missing=create_spec_profile, source_filters=draft.source_filters, extend_profile=extend_spec_profile, profile_choice=spec_profile_id,
         )
         db.refresh(row)
+
+    # The description's links to OUR category / brand pages were written with the slugs those would get; now that the category exists,
+    # check them against the real ones (a different slug, or a category the admin did not approve, must never leave a dead link).
+    try:
+        fixed = description_writer.repair_links(db, company_id, row)
+        if fixed != (row.description or ""):
+            row.description = fixed
+            db.commit()
+            db.refresh(row)
+    except Exception:  # noqa: BLE001 - links are an upgrade, never a reason to fail an import
+        db.rollback()
 
     # Focus keyphrase / meta title / meta description — the page's own SEO tags are the
     # seller's ("… Price in BD"), and nothing set a focus keyphrase at all, so write all three

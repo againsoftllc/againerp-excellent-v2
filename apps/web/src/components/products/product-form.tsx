@@ -1460,6 +1460,13 @@ export function ProductForm({
                 const body = ((values.description || "") + " " + (values.shortDescription || "")).replace(/<[^>]+>/g, "").toLowerCase();
                 const titleLen = (values.metaTitle || "").length;
                 const descLen = values.metaDescription.length;
+                // the description's own quality: length, headings, and links to our other pages
+                const descHtml = values.description || "";
+                const descText = descHtml.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim();
+                const descWords = descText ? descText.split(" ").length : 0;
+                const descH2 = (descHtml.match(/<h2\b/gi) || []).length;
+                const descH3 = (descHtml.match(/<h3\b/gi) || []).length;
+                const descLinks = new Set(Array.from(descHtml.matchAll(/<a\b[^>]*\bhref\s*=\s*["'](\/[^"']*)["']/gi), (m) => m[1])).size;
 
                 const checks = [
                   // Keyphrase group (30 pts)
@@ -1474,9 +1481,12 @@ export function ProductForm({
                   { group: "Meta", label: "Meta description is set", ok: values.metaDescription.trim().length > 0, pts: 5 },
                   { group: "Meta", label: "Meta description length (120–160 chars)", ok: descLen >= 120 && descLen <= 160, pts: 10 },
                   // Content group (25 pts)
-                  { group: "Content", label: "Product description is set", ok: (values.description || "").replace(/<[^>]+>/g, "").trim().length > 30, pts: 10 },
-                  { group: "Content", label: "Short description is set", ok: (values.shortDescription || "").replace(/<[^>]+>/g, "").trim().length > 0, pts: 5 },
-                  { group: "Content", label: "Product has images", ok: productMedia.length > 0, pts: 10 },
+                  { group: "Content", label: "Product description is set", ok: descText.length > 30, pts: 3 },
+                  { group: "Content", label: "Description has 300+ words", ok: descWords >= 300, pts: 5 },
+                  { group: "Content", label: "Description has 2+ H2 and 3+ H3 headings", ok: descH2 >= 2 && descH3 >= 3, pts: 5 },
+                  { group: "Content", label: "Description links to 2+ of our pages", ok: descLinks >= 2, pts: 4 },
+                  { group: "Content", label: "Short description is set", ok: (values.shortDescription || "").replace(/<[^>]+>/g, "").trim().length > 0, pts: 3 },
+                  { group: "Content", label: "Product has images", ok: productMedia.length > 0, pts: 5 },
                   // Technical group (15 pts)
                   { group: "Technical", label: "URL slug is set", ok: values.slug.trim().length > 0, pts: 5 },
                   { group: "Technical", label: "Slug is readable (lowercase, hyphens)", ok: /^[a-z0-9-]+$/.test(values.slug.trim()), pts: 5 },
