@@ -313,6 +313,8 @@ def _category_path_from_breadcrumb(db: Session, company_id: str, crumbs: list[st
         k = _cat_key(c)
         if not k or k == "home" or k == name_key or (len(k) > 20 and k[:20] == name_key[:20]):
             continue
+        if _is_brand_crumb(c, draft.brand_name):  # the brand is the LAST level, added under the type category on import - never a type itself
+            continue
         parent_id = path[-1].id if path else None
         words = sorted(re.findall(r"[a-z0-9]+", c.lower()))
         hit = next(
@@ -735,6 +737,52 @@ def _resolve_or_create_category(db: Session, name: str, company_id: str, parent_
         parent = None
     _apply_path_depth(category, parent)
     category.sort_order = _next_sort_order(db, parent.id if parent else None)
+    db.flush()
+    return category.id
+
+
+def resolve_category_path(db: Session, company_id: str, path: str) -> list[str]:
+    """"Laptop > All Laptop > Acer" -> the ids of that chain, root first. Each level is looked up UNDER the level before it
+    (so 'Acer' is the Acer below All Laptop, not another 'Acer'); a level that is not there yet is created right there.
+    The first level may be an existing category anywhere (Laptop); a later level that is a brand gets the brand slug."""
+    names = [n.strip() for n in path.split(">") if n.strip()]
+    ids: list[str] = []
+    parent: Optional[CatalogCategory] = None
+    for i, nm in enumerate(names):
+        if parent is None:
+            # a root level names a root category; the 'Acer' under Laptop is not the root 'Acer'
+            roots = _catalog_categories(db, company_id).filter(CatalogCategory.parent_id.is_(None)).all()
+            hit = next((c for c in roots if _cat_key(c.name) == _cat_key(nm)), None)
+            if hit is None:
+                hit = db.get(CatalogCategory, _resolve_or_create_category(db, nm, company_id))
+            parent = hit
+        else:
+            key = _cat_key(nm)
+            kids = _catalog_categories(db, company_id).filter(CatalogCategory.parent_id == parent.id).all()
+            hit = next((c for c in kids if _cat_key(c.name) == key), None)
+            if hit is None:
+                hit = brand_level_category(db, company_id, parent, nm, create=True) if i == len(names) - 1 and _find_brand(db, company_id, nm) is not None else None
+            if hit is None:
+                new_id = _resolve_new_child(db, company_id, nm, parent)
+                hit = db.get(CatalogCategory, new_id)
+            parent = hit
+        if parent.id not in ids:
+            ids.append(parent.id)
+    return ids
+
+
+def _resolve_new_child(db: Session, company_id: str, name: str, parent: CatalogCategory) -> str:
+    category = CatalogCategory(
+        name=name[:255],
+        caption=name[:255],
+        slug=_unique_category_slug(db, slugify(name) or "category"),
+        company_id=company_id,
+        channel=IMPORT_CHANNEL,
+    )
+    db.add(category)
+    db.flush()
+    _apply_path_depth(category, parent)
+    category.sort_order = _next_sort_order(db, parent.id)
     db.flush()
     return category.id
 

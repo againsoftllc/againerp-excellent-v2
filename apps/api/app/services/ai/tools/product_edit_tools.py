@@ -195,9 +195,13 @@ def build_product_edit_tools(
         from app.services.catalog_ai.importer_service import _catalog_brands, _match_category
 
         new_categories: list[str] = []
+        path_names: list[str] = []
         if changes.get("categories"):
             ids: list[str] = []
             for name in changes["categories"]:
+                if ">" in str(name):  # an explicit chain ("Laptop > All Laptop > Acer"): built level by level at confirm
+                    path_names.append(str(name))
+                    continue
                 cat = _match_category(db, company_id, str(name))  # type: ignore[arg-type]
                 if cat is None:
                     new_categories.append(str(name).strip())
@@ -205,6 +209,8 @@ def build_product_edit_tools(
                     ids.append(cat.id)
             if new_categories:
                 notes.append(f"Will create new categories: {', '.join(new_categories)}")
+            if path_names:
+                notes.append(f"Category chains (each level is looked up under the one before it, missing levels are created): {'; '.join(path_names)}")
             update["category_names"] = [str(n).strip() for n in changes["categories"]]
             update["_category_ids"] = ids
         if changes.get("brand"):
@@ -261,13 +267,17 @@ def build_product_edit_tools(
             return {"status": "preview", "preview": preview, "note": CONFIRM_NOTE}
 
         from app.routers.catalog_products import update_product as patch_product
-        from app.services.catalog_ai.importer_service import _resolve_or_create_brand, _resolve_or_create_category
+        from app.services.catalog_ai.importer_service import _resolve_or_create_brand, _resolve_or_create_category, resolve_category_path
 
         cid = product.company_id or company_id or "default"
         payload: dict[str, Any] = {k: v for k, v in update.items() if not k.startswith("_") and k not in ("category_names", "brand_name")}
         try:
             if "category_names" in update:
                 ids = list(update["_category_ids"])
+                for chain in path_names:
+                    for cat_id in reversed(resolve_category_path(db, cid, chain)):  # deepest level first = primary
+                        if cat_id not in ids:
+                            ids.append(cat_id)
                 for name in new_categories:
                     ids.append(_resolve_or_create_category(db, name, cid))  # type: ignore[arg-type]
                 payload["category_ids"] = ids
@@ -330,7 +340,7 @@ def build_product_edit_tools(
                                 "stock_status": {"type": "string", "enum": ["in_stock", "out_of_stock", "pre_order", "coming_soon"]},
                                 "visibility": {"type": "string", "enum": ["public", "private"]},
                                 "brand": {"type": "string"},
-                                "categories": {"type": "array", "items": {"type": "string"}, "description": "Category names; the first is the primary"},
+                                "categories": {"type": "array", "items": {"type": "string"}, "description": "Category names; the first is the primary. For an exact chain write it with '>' root first, e.g. 'Laptop > All Laptop > Acer' - every level is created under the one before it"},
                             },
                         },
                         "rewrite": {

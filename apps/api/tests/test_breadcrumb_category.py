@@ -51,3 +51,22 @@ def test_the_brand_level_never_becomes_the_category():
         assert imp._category_from_breadcrumb(None, "default", crumbs, d) == "Motherboard"
     finally:
         imp._match_category = saved
+
+
+def test_the_path_stops_before_the_brand_level():
+    # Laptop > Gaming Laptop > Acer: the brand crumb must not be taken for the Acer that already sits under Laptop
+    cats = {None: [type("C", (), {"id": "laptop", "name": "Laptop"})()], "laptop": [type("C", (), {"id": "acer", "name": "Acer"})()]}
+
+    class Q:
+        def __init__(self): self.pid = None
+        def filter(self, cond): self.pid = getattr(getattr(cond, "right", None), "value", None); return self
+        def all(self): return cats.get(self.pid, [])
+
+    saved = imp._catalog_categories
+    imp._catalog_categories = lambda db, cid: Q()
+    try:
+        d = ProductDraft(name="Acer Nitro 5 Pro AN5P16-74G2 Gaming Laptop", brand_name="Acer", model="AN5P16")
+        path = imp._category_path_from_breadcrumb(None, "default", ["Home", "Laptop", "Gaming Laptop", "Acer", d.name], d)
+        assert [c.name for c in path] == ["Laptop"]
+    finally:
+        imp._catalog_categories = saved
