@@ -164,6 +164,12 @@ def _apply_product_categories(
         cat = db.get(CatalogCategory, primary)
         if cat:
             row.category = cat.name
+            # the last level can be the brand (Motherboard > Gigabyte): "category" then names the TYPE (Motherboard) - the spec profile, the SEO title and
+            # the related-products lookup read it
+            parent = db.get(CatalogCategory, cat.parent_id) if cat.parent_id else None
+            brand_key = re.sub(r"[^a-z0-9]+", "", (row.brand or "").lower())
+            if parent is not None and brand_key and re.sub(r"[^a-z0-9]+", "", cat.name.lower()) == brand_key:
+                row.category = parent.name
     else:
         row.category = None
 

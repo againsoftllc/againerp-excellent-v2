@@ -153,6 +153,9 @@ def parse_category_filters(html: str) -> list[dict]:
         for o in reversed(opts):
             if title.endswith(o):
                 title = title[: -len(o)].strip()
+        # "SSD Brand", "Monitor Brand": the shop's own brand filter - ours is the storefront's built-in brand filter, not an attribute
+        if re.sub(r"[^a-z]", "", title.lower()).endswith("brand"):
+            continue
         if len(opts) >= 2 and 0 < len(title) <= 60:
             out.append({"title": title, "options": opts[:40]})
     return out or _generic_filters(soup)

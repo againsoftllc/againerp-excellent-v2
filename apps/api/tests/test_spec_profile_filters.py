@@ -28,7 +28,8 @@ def test_filters_sit_on_the_matching_attributes_and_nothing_is_listed_twice():
     by_title = {e["title"]: e for e in out["filter_attrs"]}
     assert set(by_title) == {"Display Size", "RAM Size", "Special Features"}  # a one-option filter is dropped
     assert (by_title["Display Size"]["group"], by_title["Display Size"]["attribute"], by_title["Display Size"]["new"]) == ("Display", "Display Size", False)
-    assert (by_title["RAM Size"]["group"], by_title["RAM Size"]["attribute"]) == ("Memory", "RAM")  # "RAM Size" is the "RAM" attribute
+    # different name -> the attribute takes the FILTER's name ("RAM" row -> "RAM Size"); the same name keeps it
+    assert (by_title["RAM Size"]["group"], by_title["RAM Size"]["attribute"], by_title["RAM Size"]["source_label"]) == ("Memory", "RAM Size", "RAM")
     assert by_title["RAM Size"]["options"] == ["8 GB", "16 GB", "32 GB"]
     assert by_title["Special Features"]["new"] is True  # no attribute says that: a new one
     assert "Overview" not in [g["name"] for g in out["groups"]]
@@ -57,3 +58,24 @@ def test_merge_filters_union_keeps_first_order():
         [{"title": "processor type", "options": ["AMD", "Snapdragon"]}, {"title": "Series", "options": ["a", "b"]}],
     )
     assert merged[0]["options"] == ["Intel", "AMD", "Apple", "Snapdragon"] and merged[1]["title"] == "Series"
+
+
+def test_filter_titles_are_cleaned_like_star_tech_should_have_written_them():
+    assert sp.clean_filter_title("ProcessorType") == "Processor Type"
+    assert sp.clean_filter_title("FromFactor") == "Form Factor"
+    assert sp.clean_filter_title("CPU Sockets") == "CPU Sockets"
+
+
+def test_two_filters_on_one_spec_row_replace_that_row():
+    proposal = {"name": "MB", "groups": [{"name": "Basic Information", "attributes": ["Supported CPU", "Chipset"]}]}
+    # the model's choice stands in for the two filters: both point at "Supported CPU"
+    sp.plan_filter_targets = lambda db, cid, groups, specs, items: {i["title"]: ("Basic Information", "Supported CPU") for i in items}
+    out = sp.attach_source_filters(
+        proposal, [], [{"title": "ProcessorType", "options": ["Intel", "AMD"]}, {"title": "CPU Sockets", "options": ["AM4", "LGA1700"]}], db=object()
+    )
+    assert out["groups"][0]["attributes"] == ["Processor Type", "CPU Sockets", "Chipset"]  # the row is gone, one attribute per filter, same place
+
+
+def test_a_short_word_before_a_capital_is_not_split():
+    assert sp.clean_filter_title("WiFi Speed") == "WiFi Speed"
+    assert sp.clean_filter_title("ReadSpeed") == "Read Speed"

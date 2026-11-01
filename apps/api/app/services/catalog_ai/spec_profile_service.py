@@ -85,8 +85,13 @@ _PLACEHOLDERS = {
 }
 
 
+_FILLER_PHRASE = re.compile(r"^(?:[\w\s().+/&-]{0,40}\s)?(?:is\s+)?not\s+(?:specified|available|mentioned|provided|applicable|stated|listed)\.?$", re.I)
+
+
 def is_placeholder(value: Optional[str]) -> bool:
-    return (value or "").strip().lower() in _PLACEHOLDERS
+    """"N/A", "-", and the sentences a model writes to fill a gap ("BIOS not specified") - never a value."""
+    v = (value or "").strip()
+    return v.lower() in _PLACEHOLDERS or bool(_FILLER_PHRASE.match(v))
 
 
 def _clean_specs(specs: SourceSpecs) -> SourceSpecs:
@@ -556,12 +561,12 @@ def map_values_traced(
         # the row it came from: the label the model named, else the row whose value it copied
         src = available.get(_norm(str((row or {}).get("source_label") or ""))) or by_value.get(_norm(value))
         label = src["label"] if src else None
-        if label and _norm(label) in claimed:
-            continue  # a source row feeds one field
+        if label and _norm(label) in claimed and not by_id[fid].get("filterable"):
+            continue  # a source row feeds one field - except the filters: one row ("Supported CPU") can give the brand AND the socket
         # the wording the product page keeps: the field's own source row if it has one, else the row the model named
         raw = hint[fid][0] if fid in hint else (src["value"] if src else None)
         put(fid, value, label, raw=raw)
-        if label and (fid in values or fid in off):
+        if label and (fid in values or fid in off) and not by_id[fid].get("filterable"):
             claimed.add(_norm(label))
     return finish()
 
@@ -798,7 +803,7 @@ def plan_filter_targets(
             + filter_lines
             + "\n\nFor EACH filter pick the ONE attribute that holds the same property, judged by meaning even when the names differ "
             "('SSD' filter = the storage capacity attribute, 'RAM Size' = 'RAM', 'Graphics' = the graphics model attribute, 'Processor "
-            "Type' = the processor brand attribute). An attribute serves at most one filter. When no attribute holds that property, "
+            "Type' = the processor brand attribute). One row may serve SEVERAL filters when they are different facts of it (the 'Supported CPU' row gives both the processor brand and the socket). When no attribute holds that property, "
             "answer attribute \"\" and name the existing group it fits best (one of: " + group_names + "). Answer group and attribute "
             "exactly as written above.",
             _FILTER_PLAN_SCHEMA, db=db, company_id=company_id or "default",
@@ -809,14 +814,12 @@ def plan_filter_targets(
     valid = {(g["name"], a) for g in groups for a in g["attributes"]}
     titles = {it["title"] for it in items}
     out: dict[str, tuple[str, str]] = {}
-    taken: set[tuple[str, str]] = set()
     for m in data.get("matches") or []:
         title, grp, attr = str((m or {}).get("filter") or ""), str((m or {}).get("group") or ""), str((m or {}).get("attribute") or "")
         if title not in titles or title in out:
             continue
-        if attr and (grp, attr) in valid and (grp, attr) not in taken:
+        if attr and (grp, attr) in valid:
             out[title] = (grp, attr)
-            taken.add((grp, attr))
         elif not attr and grp in {g["name"] for g in groups}:
             out[title] = (grp, "")
     return out
@@ -850,19 +853,30 @@ def _match_filters_to_attrs(items: list[dict], attrs: list[tuple[str, str]], tak
     return out
 
 
+_TITLE_TYPOS = {"from factor": "Form Factor"}  # Star Tech's own filter titles carry this typo ("FromFactor")
+
+
+def clean_filter_title(title: str) -> str:
+    """"ProcessorType" -> "Processor Type", "FromFactor" -> "Form Factor": Star Tech writes some filter titles without a space (and one with a typo)."""
+    # split "ProcessorType" but leave "WiFi" / "McAfee" alone: only after 3+ lowercase letters
+    t = re.sub(r"(?<=[a-z]{3})(?=[A-Z])", " ", re.sub(r"\s+", " ", str(title or "")).strip())
+    return _TITLE_TYPOS.get(t.lower(), t)
+
+
 def attach_source_filters(
     proposal: dict, specs: SourceSpecs, source_filters: list[dict], *, db: Optional[Session] = None, company_id: Optional[str] = None
 ) -> dict:
-    """Make the proposed profile's attributes filterable from the SOURCE shop's own filters (its category pages). A filter is NOT
-    a second attribute: it goes onto the attribute that holds the same property (the model judges by meaning - "SSD" = the storage
-    capacity, "Graphics" = the graphics model; names decide when it is unavailable), which then takes the shop's options exactly as
-    written. No attribute for it -> a new attribute in the group that fits best. A product's value is the option the filter uses; the
-    source's own wording is kept next to it as the text the product page shows. Returns the proposal with "filter_attrs"
-    [{title, group, attribute, kind, options, new}] plus "filters" {title: options}, "multi" and "ranges" (filter titles)."""
+    """Make the proposed profile's attributes filterable from the SOURCE shop's own filters, named the way the shop names them:
+    - a filter and the spec row it belongs to (the model judges by meaning; names decide when it is unavailable) with the SAME name: the attribute keeps it;
+    - a DIFFERENT name: the attribute is called by the FILTER's name ("Type" -> "RAM Type"); the spec text stays as the text the product page shows;
+    - several filters on one row ("Supported CPU" -> Processor Type + CPU Sockets): the row is replaced by one attribute per filter;
+    - a filter no row holds: a new attribute in the group that fits best.
+    The filter's options are the shop's, as written. Returns the proposal with "filter_attrs" [{title, group, attribute, kind, options, new, source_label}]
+    plus "filters" {title: options}, "multi" and "ranges" (filter titles)."""
     items: list[dict] = []
     seen: set[str] = set()
     for f in source_filters or []:
-        title = re.sub(r"\s+", " ", str(f.get("title") or "")).strip()[:255]
+        title = clean_filter_title(f.get("title"))[:255]
         options = [str(o).strip() for o in f.get("options") or [] if str(o).strip()]
         if len(options) < 2 or not title or slugify_code(title) in seen:
             continue
@@ -874,27 +888,44 @@ def attach_source_filters(
     groups = [{"name": g["name"], "attributes": list(g["attributes"])} for g in proposal.get("groups", [])]
     attrs = [(g["name"], a) for g in groups for a in g["attributes"]]
     targets = plan_filter_targets(db, company_id, groups, specs, items) if db is not None and groups else {}
-    taken = {t for t in targets.values() if t[1]}
-    fallback = _match_filters_to_attrs([it for it in items if not targets.get(it["title"], ("", ""))[1]], attrs, taken)
-    chosen: list[dict] = []
+    fallback = _match_filters_to_attrs([it for it in items if not targets.get(it["title"], ("", ""))[1]], attrs, {t for t in targets.values() if t[1]})
+    by_row: dict[tuple[str, str], list[dict]] = {}
+    loose: list[tuple[dict, str]] = []  # filters no row holds, with the group the model suggested
     for it in items:
         grp, attr = targets.get(it["title"]) or ("", "")
         if not attr:
             grp, attr = fallback.get(it["title"]) or (grp, "")
-        new = False
-        if not attr:
-            words = _label_words(it["title"])
-            best = max(groups, key=lambda g: len(words & _label_words(g["name"])), default=None)
-            gname = grp or (best["name"] if best and words & _label_words(best["name"]) else KEY_FEATURE_GROUP)
-            target = next((g for g in groups if g["name"] == gname), None)
-            if target is None:
-                target = {"name": gname, "attributes": []}
-                groups.append(target)
-            attr = it["title"]
-            if slugify_code(attr) not in {slugify_code(a) for a in target["attributes"]}:
-                target["attributes"].append(attr)
-            grp, new = target["name"], True
-        chosen.append({**it, "group": grp, "attribute": attr, "new": new})
+        if attr:
+            by_row.setdefault((grp, attr), []).append(it)
+        else:
+            loose.append((it, grp))
+    chosen: list[dict] = []
+    for g in groups:
+        rebuilt: list[str] = []
+        for a in g["attributes"]:
+            its = by_row.get((g["name"], a))
+            if not its:
+                rebuilt.append(a)
+                continue
+            for it in its:
+                # same name -> keep the row's own label; otherwise the filter's name
+                label = a if (len(its) == 1 and slugify_code(a) == slugify_code(it["title"])) else it["title"]
+                if slugify_code(label) in {slugify_code(x) for x in rebuilt}:
+                    continue
+                rebuilt.append(label)
+                chosen.append({**it, "group": g["name"], "attribute": label, "new": False, "source_label": a})
+        g["attributes"] = rebuilt
+    for it, grp in loose:
+        words = _label_words(it["title"])
+        best = max(groups, key=lambda g: len(words & _label_words(g["name"])), default=None)
+        gname = grp or (best["name"] if best and words & _label_words(best["name"]) else KEY_FEATURE_GROUP)
+        target = next((g for g in groups if g["name"] == gname), None)
+        if target is None:
+            target = {"name": gname, "attributes": []}
+            groups.append(target)
+        if slugify_code(it["title"]) not in {slugify_code(x) for x in target["attributes"]}:
+            target["attributes"].append(it["title"])
+        chosen.append({**it, "group": target["name"], "attribute": it["title"], "new": True, "source_label": ""})
     return {
         **proposal,
         "groups": groups,
@@ -962,10 +993,12 @@ def extend_profile_with_filters(db: Session, profile: CatalogAttributeProfile, u
     return added
 
 
-def fill_multi_select(db: Session, product: CatalogProduct, profile: CatalogAttributeProfile, specs: SourceSpecs, extra_text: str = "") -> int:
+def fill_multi_select(
+    db: Session, product: CatalogProduct, profile: CatalogAttributeProfile, specs: SourceSpecs, extra_text: str = "", skip: Optional[set[str]] = None
+) -> int:
     """The profile's multi-select filter attributes (Key Feature ...): the product gets EVERY option the source says about
     it - option text found in its spec rows / title, whole words only (stored comma-separated, like the admin editor)."""
-    fields = [f for f in profile_fields(db, profile.id) if f.get("field_type") == "multi_select" and f["options"]]
+    fields = [f for f in profile_fields(db, profile.id) if f.get("field_type") == "multi_select" and f["options"] and f["id"] not in (skip or set())]
     if not fields:
         return 0
     blob = _canon_text(" ; ".join([extra_text,*[f"{i['label']} {i['value']}" for g in _clean_specs(specs) for i in g["items"]]]))

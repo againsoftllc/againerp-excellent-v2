@@ -32,3 +32,22 @@ def test_the_deepest_category_crumb_is_the_category_whatever_the_title_says():
 def test_a_short_category_name_is_never_taken_for_the_product():
     assert not imp._is_product_crumb("Hard Disk Drive", "Toshiba S300 Hard Disk Drive 2TB")
     assert imp._is_product_crumb('Toshiba S300 2TB 5400rpm 3.5" Surveillance Hard Drive', "Toshiba S300 2TB Surveillance Hard Drive")
+
+
+def test_the_shops_brand_level_is_the_brand_not_a_category():
+    assert imp._is_brand_crumb("GIGABYTE (Intel)", "GIGABYTE")
+    assert imp._is_brand_crumb("Toshiba", "Toshiba")
+    assert not imp._is_brand_crumb("Motherboard", "GIGABYTE")
+    assert not imp._is_brand_crumb("Acer Laptop", "Acer")  # a real category that merely starts with the brand
+    assert imp.same_brand("Gigabyte", "GIGABYTE")
+
+
+def test_the_brand_level_never_becomes_the_category():
+    saved = imp._match_category
+    imp._match_category = lambda db, cid, n: None
+    try:
+        crumbs = ["home", "Component", "Motherboard", "GIGABYTE (Intel)", "GIGABYTE H610M K DDR4 Micro ATX Motherboard"]
+        d = ProductDraft(name="GIGABYTE H610M K DDR4 Micro ATX Motherboard", brand_name="GIGABYTE", model="H610M K")
+        assert imp._category_from_breadcrumb(None, "default", crumbs, d) == "Motherboard"
+    finally:
+        imp._match_category = saved

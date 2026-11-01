@@ -314,8 +314,13 @@ def _category_path_from_breadcrumb(db: Session, company_id: str, crumbs: list[st
         if not k or k == "home" or k == name_key or (len(k) > 20 and k[:20] == name_key[:20]):
             continue
         parent_id = path[-1].id if path else None
+        words = sorted(re.findall(r"[a-z0-9]+", c.lower()))
         hit = next(
-            (x for x in _catalog_categories(db, company_id).filter(CatalogCategory.parent_id == parent_id).all() if _cat_key(x.name) == k),
+            (
+                x for x in _catalog_categories(db, company_id).filter(CatalogCategory.parent_id == parent_id).all()
+                # the same name, or the same words in another order ("RAM (Desktop)" = "Desktop RAM")
+                if _cat_key(x.name) == k or (len(words) >= 2 and sorted(re.findall(r"[a-z0-9]+", x.name.lower())) == words)
+            ),
             None,
         )
         if hit is not None:
@@ -331,12 +336,24 @@ def _match_category(db: Session, company_id: str, name: str) -> Optional[Catalog
     if hit is not None:
         return hit
     key = _cat_key(leaf)  # "Routers" == "Router", "UPS" == "ups"
-    return next((c for c in _catalog_categories(db, company_id).all() if _cat_key(c.name) == key), None) if key else None
+    cats = _catalog_categories(db, company_id).all()
+    hit = next((c for c in cats if _cat_key(c.name) == key), None) if key else None
+    if hit is not None:
+        return hit
+    # the same words in another order: the shop's "RAM (Desktop)" is our "Desktop RAM"
+    words = sorted(re.findall(r"[a-z0-9]+", leaf.lower()))
+    return next((c for c in cats if len(words) >= 2 and sorted(re.findall(r"[a-z0-9]+", c.name.lower())) == words), None)
 
 
 def _cat_key(text: str) -> str:
     k = re.sub(r"[^a-z0-9]+", "", (text or "").lower())
     return k[:-1] if len(k) > 3 and k.endswith("s") else k
+
+
+def _is_brand_crumb(crumb: str, brand_name: Optional[str]) -> bool:
+    """The shop's brand level: "GIGABYTE", "GIGABYTE (Intel)" - the brand's name, optionally followed by a bracketed note."""
+    brand_key = _cat_key(brand_name or "")
+    return bool(brand_key) and _cat_key(re.sub(r"\([^)]*\)", "", crumb or "")) == brand_key
 
 
 def _crumb_words(text: str) -> set[str]:
@@ -371,7 +388,7 @@ def _category_from_breadcrumb(
     trail = []
     for c in crumbs:
         k = _cat_key(c)
-        if not k or k == "home" or k == brand_key:
+        if not k or k == "home" or k == brand_key or _is_brand_crumb(c, draft.brand_name):
             continue
         if k in own_crumbs or _is_product_crumb(c, draft.name):  # the product's own title (last crumb)
             continue
@@ -559,7 +576,7 @@ def extract_from_url(
             trail_urls: list[str] = []
             for l in page.structured.get("breadcrumb_links") or []:
                 k = _cat_key(str(l.get("name") or ""))
-                if not k or k == "home" or k == brand_key or k == name_key or (len(k) > 20 and k[:20] == name_key[:20]):
+                if not k or k == "home" or k == brand_key or _is_brand_crumb(str(l.get("name") or ""), draft.brand_name) or k == name_key or (len(k) > 20 and k[:20] == name_key[:20]):
                     continue
                 if l.get("url"):
                     trail_urls.append(str(l["url"]))
@@ -617,6 +634,13 @@ def extract_from_url(
             if node is not None and node.channel == IMPORT_CHANNEL and node.id not in matched_category_ids:
                 matched_category_ids.append(node.id)
 
+    if draft.brand_name and matched_category_ids:
+        type_cat = db.get(CatalogCategory, matched_category_ids[0])
+        if type_cat is not None and type_cat.channel == IMPORT_CHANNEL and not same_brand(type_cat.name, draft.brand_name):
+            if brand_level_category(db, company_id, type_cat, draft.brand_name, create=False) is None:
+                warnings.append(f"Category '{draft.brand_name}' does not exist yet under '{type_cat.name}' - will be created on import, the product is filed there ({type_cat.name} > {draft.brand_name}).")
+    elif draft.brand_name and draft.category_name and _match_category(db, company_id, draft.category_name) is None:
+        warnings.append(f"The brand level '{draft.brand_name}' will be created under the new category '{draft.category_name}' on import.")
     if short_rule:
         n_pts = len([ln for ln in (draft.short_description or "").splitlines() if ln.strip()])
         if n_pts != 4:
@@ -713,6 +737,42 @@ def _resolve_or_create_category(db: Session, name: str, company_id: str, parent_
     category.sort_order = _next_sort_order(db, parent.id if parent else None)
     db.flush()
     return category.id
+
+
+def same_brand(category_name: Optional[str], brand_name: Optional[str]) -> bool:
+    a, b = _cat_key(category_name or ""), _cat_key(brand_name or "")
+    return bool(a) and a == b
+
+
+def brand_level_category(
+    db: Session, company_id: str, parent: CatalogCategory, brand_name: str, *, create: bool
+) -> Optional[CatalogCategory]:
+    """The brand level of a product category: Components > Motherboard > Gigabyte (what Star Tech shows as "GIGABYTE (Intel)"). The brand's category
+    under that parent when there is one; else - when `create` - a new one. Its slug carries the parent ("gigabyte-motherboard") so it never
+    collides with the brand's own page ("/gigabyte") or the same brand under another category. None when the parent already IS that brand."""
+    name = re.sub(r"\s+", " ", brand_name or "").strip()
+    if not name or same_brand(parent.name, name):
+        return None
+    hit = (
+        db.query(CatalogCategory)
+        .filter(CatalogCategory.company_id == company_id, CatalogCategory.parent_id == parent.id, CatalogCategory.name.ilike(name))
+        .first()
+    )
+    if hit is not None or not create:
+        return hit
+    category = CatalogCategory(
+        name=name[:255],
+        caption=name[:255],
+        slug=_unique_category_slug(db, f"{slugify(name) or 'brand'}-{parent.slug}"),
+        company_id=company_id,
+        channel=IMPORT_CHANNEL,
+    )
+    db.add(category)
+    db.flush()
+    _apply_path_depth(category, parent)
+    category.sort_order = _next_sort_order(db, parent.id)
+    db.flush()
+    return category
 
 
 def _unique_category_slug(db: Session, base: str) -> str:
@@ -861,6 +921,14 @@ def create_product_from_draft(
         # the source files the product one level below the deepest category we have: create that level under it, make it primary
         category_id = _resolve_or_create_category(db, draft.category_name, company_id, parent_id=category_id)
         payload = payload.model_copy(update={"category_id": category_id, "category_ids": [category_id, *payload.category_ids]})
+    # the brand is the LAST category level (Components > Motherboard > Gigabyte): the product is filed there, and under the levels above it
+    if category_id and draft.brand_name:
+        type_cat = db.get(CatalogCategory, category_id)
+        if type_cat is not None and type_cat.channel == IMPORT_CHANNEL:
+            brand_cat = brand_level_category(db, company_id, type_cat, draft.brand_name, create=bool(payload.create_category_if_missing))
+            if brand_cat is not None:
+                category_id = brand_cat.id
+                payload = payload.model_copy(update={"category_id": brand_cat.id, "category_ids": [brand_cat.id, *[c for c in payload.category_ids if c != brand_cat.id]]})
     our_company = _company_name(db, company_id)
     # Long-form page text → description; the highlights block → short description (each falls
     # back to the other), with the seller's own name swapped for ours in both.
