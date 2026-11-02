@@ -3,6 +3,7 @@ from __future__ import annotations
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
+from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from app.database import get_db
@@ -40,6 +41,27 @@ def list_newsletter_subscribers(
         data=data,
         meta=NewsletterSubscriberListMeta(count=len(data), active_count=active_count),
     )
+
+
+class SubscriberActiveUpdate(BaseModel):
+    is_active: bool
+
+
+@router.patch("/{subscriber_id}", response_model=NewsletterSubscriberRead)
+def set_newsletter_subscriber_active(
+    subscriber_id: str,
+    payload: SubscriberActiveUpdate,
+    db: Session = Depends(get_db),
+    _: object = Depends(require_write_access),
+) -> NewsletterSubscriberRead:
+    """Unsubscribe / re-subscribe a contact without losing the row."""
+    row = db.get(NewsletterSubscriber, subscriber_id)
+    if not row:
+        raise HTTPException(status_code=404, detail="Subscriber not found")
+    row.is_active = payload.is_active
+    db.commit()
+    db.refresh(row)
+    return NewsletterSubscriberRead.model_validate(row)
 
 
 @router.delete("/{subscriber_id}", status_code=204)
