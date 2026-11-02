@@ -52,6 +52,7 @@ from app.models.marketing_audience import MarketingAudience
 from app.models.marketing_campaign import MarketingCampaign
 from app.models.marketing_journey import MarketingJourney
 from app.models.marketing_coupon import MarketingCoupon
+from app.models.marketing_popup import MarketingPopup  # noqa: F401 — register metadata
 from app.models.marketing_happy_hour import (  # noqa: F401 — register metadata
     MarketingHappyHour,
     MarketingHappyHourDeal,

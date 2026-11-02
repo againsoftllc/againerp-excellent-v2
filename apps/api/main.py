@@ -189,6 +189,7 @@ from app.routers import (
     platform_settings,
     marketing_coupons,
     marketing_happy_hours,
+    marketing_popups,
     marketing_offers,
     storefront_account,
     storefront_auth,
@@ -220,6 +221,7 @@ from app.routers import (
     storefront_ai_search,
     storefront_offer_pages,
     storefront_happy_hour,
+    storefront_popups,
     storefront_deals,
     storefront_hot_products,
     storefront_downloads,
@@ -1046,6 +1048,7 @@ app.include_router(platform_settings.router, prefix="/api/v1", dependencies=requ
 app.include_router(marketing_coupons.router, prefix="/api/v1", dependencies=require_admin)
 app.include_router(marketing_offers.router, prefix="/api/v1", dependencies=require_admin)
 app.include_router(marketing_happy_hours.router, prefix="/api/v1", dependencies=require_admin)
+app.include_router(marketing_popups.router, prefix="/api/v1", dependencies=require_admin)
 app.include_router(configurator_profiles.router, prefix="/api/v1/configurator", dependencies=require_admin)
 app.include_router(configurator_categories.router, prefix="/api/v1/configurator", dependencies=require_admin)
 app.include_router(configurator_templates.router, prefix="/api/v1/configurator", dependencies=require_admin)
@@ -1088,6 +1091,7 @@ app.include_router(storefront_tracking.router, prefix="/api/v1/storefront")
 app.include_router(storefront_ai_search.router, prefix="/api/v1/storefront")
 app.include_router(storefront_offer_pages.router, prefix="/api/v1/storefront")
 app.include_router(storefront_happy_hour.router, prefix="/api/v1/storefront")
+app.include_router(storefront_popups.router, prefix="/api/v1/storefront")
 app.include_router(storefront_chat.router, prefix="/api/v1/storefront")
 app.include_router(storefront_auth.router, prefix="/api/v1/storefront")
 app.include_router(storefront_account.router, prefix="/api/v1/storefront")
