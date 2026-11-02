@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import json
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Response
@@ -75,6 +75,9 @@ class StorefrontHappyHourSection(BaseModel):
 
 
 class StorefrontHappyHourDetail(BaseModel):
+    # live = inside tonight's window (deal prices apply); countdownISO = when the window ENDS (live) or next OPENS (not live)
+    live: bool = True
+    countdownISO: str = ""
     slug: str
     title: str
     subtitle: Optional[str] = None
@@ -94,14 +97,37 @@ class StorefrontHappyHourResponse(BaseModel):
     data: StorefrontHappyHourDetail
 
 
+def _next_hour_boundary(now_utc: datetime, hour: int) -> datetime:
+    """The next time (UTC) the Dhaka wall clock reads `hour`:00 (24 = midnight)."""
+    from app.models.catalog_product_special import BD_UTC_OFFSET_HOURS
+
+    bd_now = now_utc + timedelta(hours=BD_UTC_OFFSET_HOURS)
+    target = bd_now.replace(hour=0, minute=0, second=0, microsecond=0) + timedelta(hours=hour)
+    if target <= bd_now:
+        target += timedelta(days=1)
+    return target - timedelta(hours=BD_UTC_OFFSET_HOURS)
+
+
+def _countdown_iso(now: datetime, row: MarketingHappyHour, live_now: bool) -> str:
+    """Live: when tonight's window ends (never past the campaign's end). Not live: when it next opens (never before the campaign starts)."""
+    if row.daily_start_hour is None or row.daily_end_hour is None:
+        return _fmt_iso(row.ends_at) + "Z"
+    if live_now:
+        end = _next_hour_boundary(now, int(row.daily_end_hour))
+        return _fmt_iso(min(end, row.ends_at)) + "Z"
+    start = _next_hour_boundary(max(now, row.starts_at), int(row.daily_start_hour))
+    return _fmt_iso(start) + "Z"
+
+
 def _detail(db: Session, row: MarketingHappyHour) -> StorefrontHappyHourDetail:
     catalog = StorefrontCatalogService(db)
     sections: List[StorefrontHappyHourSection] = []
     # Outside tonight's window the page still shows (title, countdown, terms)
     # so shoppers know when it opens, but no product/price is listed yet —
     # matches the price-side nightly gating already applied on the PDP.
-    live_now = in_daily_window(datetime.utcnow(), row.daily_start_hour, row.daily_end_hour)
-    if live_now:
+    now = datetime.utcnow()
+    live_now = in_daily_window(now, row.daily_start_hour, row.daily_end_hour)
+    if True:  # the products are listed outside the window too - at their regular price, so the page is never empty
         from app.models.catalog_product import CatalogProduct
 
         all_slugs = {
@@ -147,6 +173,10 @@ def _detail(db: Session, row: MarketingHappyHour) -> StorefrontHappyHourDetail:
                 offer = float(deal.offer_price)
                 if offer <= 0 or offer >= regular:
                     continue
+                if not live_now:
+                    # not open yet: the product's own price, no deal price and no strike-through
+                    price_now = float(raw.price) if raw is not None else float(view.price)
+                    offer, regular = price_now, None
                 products.append(
                     StorefrontHappyHourDealProduct(
                         id=view.id,
@@ -171,6 +201,8 @@ def _detail(db: Session, row: MarketingHappyHour) -> StorefrontHappyHourDetail:
                 )
             )
     return StorefrontHappyHourDetail(
+        live=live_now,
+        countdownISO=_countdown_iso(now, row, live_now),
         slug=row.slug,
         title=row.title,
         subtitle=row.subtitle,

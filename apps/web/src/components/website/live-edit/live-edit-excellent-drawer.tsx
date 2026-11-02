@@ -15,6 +15,7 @@ import { AgainFormRow } from "@/components/again/again-form-sheet";
 import { LiveEditDrawerBackButton } from "@/components/website/live-edit/live-edit-drawer-back-button";
 import { LiveEditDrawerSaveButton } from "@/components/website/live-edit/live-edit-drawer-save-button";
 import { LiveEditExcellentKindCards } from "@/components/website/live-edit/live-edit-excellent-hero-cards";
+import { LiveEditExcellentDeals } from "@/components/website/live-edit/live-edit-excellent-deals";
 import { LiveEditExcellentCollection } from "@/components/website/live-edit/live-edit-excellent-collection";
 import { LiveEditExcellentCategoryTiles } from "@/components/website/live-edit/live-edit-excellent-category-tiles";
 import { MediaLibraryModal } from "@/components/media/media-library-modal";
@@ -223,16 +224,8 @@ export function LiveEditExcellentDrawer({ onBack, open, onOpenChange, section, c
           </div>
         );
       }
-      case "deals": {
-        const d = obj(ex.deals);
-        return (
-          <div className="space-y-3 rounded-md border border-border bg-card p-2.5">
-            <Field label="Heading" value={d.title} onChange={(v) => setEx({ deals: { ...d, title: v } })} />
-            <Field label="Sub heading" value={d.subtitle} onChange={(v) => setEx({ deals: { ...d, subtitle: v } })} />
-            <p className="text-[11px] text-muted-foreground">The products come from the running Happy Hour (or sale products).</p>
-          </div>
-        );
-      }
+      case "deals":
+        return <LiveEditExcellentDeals ex={ex} setEx={setEx} />;
       case "banners":
         return (
           <LiveEditExcellentKindCards

@@ -1463,6 +1463,20 @@ def newest_products(
     )
 
 
+@router.get("/recently-sold", response_model=StorefrontProductListResponse)
+def recently_sold_products(
+    response: Response,
+    db: Session = Depends(get_db),
+    limit: int = Query(4, ge=1, le=24),
+) -> StorefrontProductListResponse:
+    _set_cache(response)
+    items = StorefrontCatalogService(db).recently_sold(limit=limit)
+    return StorefrontProductListResponse(
+        data=_attach_review_stats(db, items),
+        meta=StorefrontProductListMeta(count=len(items), page=1, per_page=limit),
+    )
+
+
 @router.get("/bestsellers", response_model=StorefrontProductListResponse)
 def bestseller_products(
     response: Response,

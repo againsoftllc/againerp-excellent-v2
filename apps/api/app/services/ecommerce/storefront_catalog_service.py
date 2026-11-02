@@ -19,6 +19,7 @@ from app.models.catalog_attribute_profile_category import CatalogAttributeProfil
 from app.models.catalog_filter import CatalogFilter
 from app.models.catalog_product_attribute_value import CatalogProductAttributeValue
 from app.models.catalog_product_related import list_related_ids
+from app.models.commerce_order import CommerceOrder
 from app.models.commerce_order_item import CommerceOrderItem
 from app.models.ecommerce_item import EcommerceItem
 from app.models.ecommerce_item_category import EcommerceItemCategory
@@ -338,6 +339,27 @@ class StorefrontCatalogService:
 
     def newest(self, *, limit: int = 12) -> List[StorefrontProductView]:
         return self.list_products(sort=SORT_NEWEST, per_page=limit, page=1).items
+
+    def recently_sold(self, *, limit: int = 4) -> List[StorefrontProductView]:
+        """The products of the latest orders, newest sale first, each product once (cancelled orders do not count)."""
+        rows = (
+            self._db.query(CommerceOrderItem.product_id, func.max(CommerceOrder.created_at).label("sold_at"))
+            .join(CommerceOrder, CommerceOrder.id == CommerceOrderItem.order_id)
+            .filter(CommerceOrder.status.notin_(["cancelled", "canceled", "failed", "refunded"]))
+            .group_by(CommerceOrderItem.product_id)
+            .order_by(desc("sold_at"))
+            .limit(limit * 6)
+            .all()
+        )
+        views: List[StorefrontProductView] = []
+        for product_id, _sold_at in rows:
+            ec = self._base_query().filter(EcommerceItem.catalog_product_id == product_id).first()
+            view = self._items.resolve_storefront_from_ecommerce(ec) if ec else None
+            if view and all(v.id != view.id for v in views):
+                views.append(view)
+            if len(views) >= limit:
+                break
+        return views
 
     def bestsellers(self, *, limit: int = 12) -> List[StorefrontProductView]:
         return self.list_products(sort=SORT_BESTSELLING, per_page=limit, page=1).items
