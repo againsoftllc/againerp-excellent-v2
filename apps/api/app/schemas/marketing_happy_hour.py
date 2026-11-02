@@ -13,6 +13,10 @@ class HappyHourDealInput(BaseModel):
     product_slug: str = Field(..., min_length=1, max_length=200)
     offer_price: float = Field(..., gt=0)
     note: Optional[str] = Field(default=None, max_length=255)
+    priority: int = 0
+    # Deal quota — null means unlimited.
+    quantity: Optional[int] = None
+    enabled: bool = True
     sort_order: int = 0
 
 
@@ -23,6 +27,13 @@ class HappyHourDealRead(BaseModel):
     product_slug: str
     offer_price: float
     note: Optional[str] = None
+    priority: int
+    quantity: Optional[int] = None
+    # How many units have sold at this deal's price — read from the synced
+    # catalog_product_specials row (checkout increments it there), not stored
+    # on the deal itself.
+    quantity_sold: int = 0
+    enabled: bool = True
     sort_order: int
 
 

@@ -29,7 +29,9 @@ from app.models.item import Item
 from app.models.media import Media
 from app.models.ecommerce_item import EcommerceItem
 from app.models.ecommerce_item_category import EcommerceItemCategory
+from app.models.catalog_product_special import CatalogProductSpecial, resolve_active_special
 from app.schemas.product import (
+    ProductReferencePricesResponse,
     ProductAddToInventory,
     ProductAddToInventoryResponse,
     ProductCreate,
@@ -1029,6 +1031,30 @@ def check_product_slug(
             message="This URL is already in use",
         )
     return ProductSlugCheckResponse(slug=normalized, available=True)
+
+
+@router.get("/reference-prices", response_model=ProductReferencePricesResponse)
+def get_reference_prices(
+    slugs: str = Query(..., min_length=1),
+    db: Session = Depends(get_db),
+) -> ProductReferencePricesResponse:
+    """For each slug that has a currently-active special price, return that price - so a Happy Hour section
+    can default a new deal's offer price to what is already configured on the product."""
+    slug_list = [s.strip() for s in slugs.split(",") if s.strip()]
+    if not slug_list:
+        return ProductReferencePricesResponse(data={})
+    id_to_slug = {r.id: r.slug for r in db.query(CatalogProduct.id, CatalogProduct.slug).filter(CatalogProduct.slug.in_(slug_list)).all()}
+    if not id_to_slug:
+        return ProductReferencePricesResponse(data={})
+    by_product: dict[str, list[CatalogProductSpecial]] = {}
+    for row in db.query(CatalogProductSpecial).filter(CatalogProductSpecial.product_id.in_(id_to_slug.keys())).all():
+        by_product.setdefault(row.product_id, []).append(row)
+    result: dict[str, Decimal] = {}
+    for product_id, rows in by_product.items():
+        active = resolve_active_special(rows)
+        if active is not None and id_to_slug.get(product_id):
+            result[id_to_slug[product_id]] = active.price
+    return ProductReferencePricesResponse(data=result)
 
 
 @router.get("/{product_id}", response_model=ProductDetailResponse)

@@ -303,3 +303,12 @@ class HealthResponse(BaseModel):
     app: str
     env: str
     database: dict
+
+
+class ProductReferencePricesResponse(BaseModel):
+    """slug -> currently active special price, for products that have one.
+    Lets an admin panel default a new deal's offer price to a price the admin
+    already configured on the product, instead of computing one from scratch."""
+
+    data: dict[str, Decimal]
+    errors: List[str] = []

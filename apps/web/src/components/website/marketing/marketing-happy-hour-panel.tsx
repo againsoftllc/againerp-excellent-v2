@@ -1,12 +1,28 @@
 "use client";
 
-import { useGridLayout } from "@/components/shared/use-grid-layout";
 import "@/components/providers/ag-grid-provider";
-import { useEffect, useMemo, useState } from "react";
+import { useGridLayout } from "@/components/shared/use-grid-layout";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { AgGridReact } from "ag-grid-react";
 import type { ColDef, ICellRendererParams } from "ag-grid-community";
-import { MoreHorizontal, Pencil, Plus, Trash2 } from "lucide-react";
+import {
+  DndContext,
+  PointerSensor,
+  closestCenter,
+  useSensor,
+  useSensors,
+  type DragEndEvent,
+} from "@dnd-kit/core";
+import {
+  SortableContext,
+  arrayMove,
+  useSortable,
+  verticalListSortingStrategy,
+} from "@dnd-kit/sortable";
+import { CSS } from "@dnd-kit/utilities";
+import { GripVertical, MoreHorizontal, Pencil, Plus, Trash2 } from "lucide-react";
+import { cn } from "@/lib/utils";
 import { toast } from "sonner";
 import {
   createMarketingHappyHour,
@@ -19,8 +35,10 @@ import {
 import { useMarketingHappyHours } from "@/lib/api/use-marketing-happy-hours";
 import { useCatalogCategories } from "@/lib/api/use-catalog-categories";
 import { useCatalogProducts } from "@/lib/api/use-catalog-products";
+import { fetchReferencePrices } from "@/lib/api/catalog-products";
 import { CategoryCombobox } from "@/components/categories/category-combobox";
 import { ProductCombobox } from "@/components/products/product-combobox";
+import { AgaincartClassicEditor } from "@/components/products/againcart-classic-editor";
 import { useIsDark } from "@/lib/use-is-dark";
 import { useAdminCanWrite } from "@/lib/hooks/use-admin-can-write";
 import { useViewerWriteUrlGuard } from "@/lib/hooks/use-viewer-write-url-guard";
@@ -32,7 +50,6 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Select } from "@/components/ui/native-select";
-import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
 import {
   DropdownMenu,
@@ -59,9 +76,17 @@ type DealDraft = {
   regular_price: string;
   offer_price: string;
   note: string;
+  priority: string;
+  /** Deal quota — empty string means unlimited. */
+  quantity: string;
+  /** Server-managed, incremented at checkout. Read-only in the UI. */
+  quantity_sold: number;
+  /** Auto-flips off once quantity sells out; the admin can also toggle it. */
+  enabled: boolean;
 };
 
 type SectionDraft = {
+  id: string;
   key: string;
   label: string;
   category_id: string;
@@ -69,6 +94,12 @@ type SectionDraft = {
   discount_value: string;
   deals: DealDraft[];
 };
+
+function newSectionId(): string {
+  return typeof crypto !== "undefined" && "randomUUID" in crypto
+    ? crypto.randomUUID()
+    : `section-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+}
 
 function buildUrl(params: URLSearchParams) {
   const q = params.toString();
@@ -89,6 +120,7 @@ function toIso(local: string) {
 
 function emptySection(): SectionDraft {
   return {
+    id: newSectionId(),
     key: "",
     label: "",
     category_id: "",
@@ -120,21 +152,31 @@ function calcOfferPrice(
   return Math.max(1, Math.round(regular - value));
 }
 
+/** Builds a deal defaulting to a price the admin already configured on the
+ * product (its currently active Special Price), falling back to the
+ * product's own regular price when it has none — never a computed discount.
+ * The admin edits the Offer column per-product from there. */
 function dealFromProduct(
   product: Product,
-  mode: DiscountMode,
-  discountValue: string,
+  referencePrice: number | null | undefined,
   note = "",
 ): DealDraft | null {
   const regular = productRegularPrice(product);
-  const offer = calcOfferPrice(regular, mode, discountValue);
-  if (offer == null || offer >= regular) return null;
+  if (!Number.isFinite(regular) || regular <= 0) return null;
+  const offer =
+    referencePrice != null && referencePrice > 0 && referencePrice < regular
+      ? referencePrice
+      : regular;
   return {
     product_slug: product.slug,
     product_name: product.name,
     regular_price: String(regular),
-    offer_price: String(offer),
+    offer_price: String(Math.round(offer)),
     note,
+    priority: "0",
+    quantity: "",
+    quantity_sold: 0,
+    enabled: true,
   };
 }
 
@@ -147,6 +189,26 @@ function money(n: number | string) {
   const v = Number(n);
   if (!Number.isFinite(v)) return "—";
   return `৳${v.toLocaleString("en-US")}`;
+}
+
+/** `terms` stays one entry per line — the editor just gives each line its own
+ * block, so a term can carry inline formatting (bold, links, color) instead
+ * of being plain text. */
+function termsToEditorHtml(terms: string[]): string {
+  return terms.map((t) => `<p>${t}</p>`).join("");
+}
+
+function editorHtmlToTerms(html: string): string[] {
+  if (typeof document === "undefined") return [];
+  const container = document.createElement("div");
+  container.innerHTML = html;
+  const blocks = Array.from(container.children).filter((el) =>
+    ["P", "LI", "DIV", "H1", "H2", "H3", "H4"].includes(el.tagName),
+  );
+  const source = blocks.length ? blocks : [container];
+  return source
+    .map((el) => el.innerHTML.trim())
+    .filter((t) => t && t !== "<br>");
 }
 
 export function MarketingHappyHourPanel() {
@@ -341,8 +403,7 @@ export function MarketingHappyHourPanel() {
         ) : null}
       </div>
 
-      <div
-            style={layout.containerStyle} className={`ag-theme-quartz${isDark ? "-dark" : ""} min-h-0 flex-1`}>
+      <div style={layout.containerStyle} className={`ag-theme-quartz${isDark ? "-dark" : ""} min-h-0 flex-1`}>
         {loading && campaigns.length === 0 ? (
           <p className="p-4 text-sm text-muted-foreground">Loading Happy Hour…</p>
         ) : filtered.length === 0 ? (
@@ -351,11 +412,11 @@ export function MarketingHappyHourPanel() {
           <AgGridReact<ApiMarketingHappyHour>
             rowData={filtered}
             columnDefs={layout.columnDefs}
-              {...layout.gridProps}
+            {...layout.gridProps}
             getRowId={(p) => p.data.id}
             pagination
             paginationPageSize={PAGE_SIZE}
-              paginationPageSizeSelector={[50, 100, 500, 1000]}
+            paginationPageSizeSelector={[50, 100, 500, 1000]}
             suppressCellFocus
             rowHeight={40}
             headerHeight={36}
@@ -415,16 +476,13 @@ function HappyHourFormSheet({
   const [sections, setSections] = useState<SectionDraft[]>([emptySection()]);
   const [pickProductId, setPickProductId] = useState<Record<number, string>>({});
   const [saving, setSaving] = useState(false);
+  const [editingSectionIndex, setEditingSectionIndex] = useState<number | null>(null);
+  const [allProductsOpen, setAllProductsOpen] = useState(false);
 
-  // Fill the form when the sheet opens or the record changes. Done while rendering (React's pattern for
-  // resetting state on a prop change) so the sheet never shows the previous record first.
-  const [loadedFor, setLoadedFor] = useState({ open: false, mode, campaign });
-  if (loadedFor.open !== open || loadedFor.mode !== mode || loadedFor.campaign !== campaign) {
-    setLoadedFor({ open, mode, campaign });
-    if (open) fillForm();
-  }
-
-  function fillForm() {
+  useEffect(() => {
+    if (!open) return;
+    setEditingSectionIndex(null);
+    setAllProductsOpen(false);
     if (mode === "edit" && campaign) {
       setTitle(campaign.title);
       setSlug(campaign.slug);
@@ -436,10 +494,11 @@ function HappyHourFormSheet({
       setEndsAt(toLocalInput(campaign.ends_at));
       setDailyStart(String(campaign.daily_start_hour ?? 22));
       setDailyEnd(String(campaign.daily_end_hour ?? 24));
-      setTermsText((campaign.terms || []).join("\n"));
+      setTermsText(termsToEditorHtml(campaign.terms || []));
       setSections(
         (campaign.sections || []).length
           ? campaign.sections.map((s) => ({
+              id: s.id || newSectionId(),
               key: s.key,
               label: s.label,
               category_id: "",
@@ -451,6 +510,10 @@ function HappyHourFormSheet({
                 regular_price: "",
                 offer_price: String(d.offer_price),
                 note: d.note || "",
+                priority: String(d.priority ?? 0),
+                quantity: d.quantity != null ? String(d.quantity) : "",
+                quantity_sold: d.quantity_sold ?? 0,
+                enabled: d.enabled ?? true,
               })),
             }))
           : [emptySection()],
@@ -460,7 +523,7 @@ function HappyHourFormSheet({
     }
     const now = new Date();
     const end = new Date(now.getTime() + 90 * 24 * 60 * 60 * 1000);
-    setTitle("Againcart Happy Hour");
+    setTitle("Happy Hour");
     setSlug("happy-hour");
     setSubtitle("");
     setDescription("");
@@ -473,18 +536,11 @@ function HappyHourFormSheet({
     setTermsText("");
     setSections([emptySection()]);
     setPickProductId({});
-  }
+  }, [open, mode, campaign]);
 
-  // Enrich section category ids + deal names/prices once catalog loads (no form reset) — while rendering,
-  // like the form fill above, each time the sheet opens or the catalog arrives.
-  const [enrichedFor, setEnrichedFor] = useState({ open: false, categories, productsBySlug });
-  if (enrichedFor.open !== open || enrichedFor.categories !== categories || enrichedFor.productsBySlug !== productsBySlug) {
-    setEnrichedFor({ open, categories, productsBySlug });
-    if (open && categories.length) enrichCategories();
-    if (open && productsBySlug.size) enrichDeals();
-  }
-
-  function enrichCategories() {
+  // Enrich section category ids + deal names/prices once catalog loads (no form reset).
+  useEffect(() => {
+    if (!open || !categories.length) return;
     setSections((rows) =>
       rows.map((section) => {
         if (section.category_id) return section;
@@ -496,9 +552,10 @@ function HappyHourFormSheet({
         return matched ? { ...section, category_id: matched.id } : section;
       }),
     );
-  }
+  }, [open, categories]);
 
-  function enrichDeals() {
+  useEffect(() => {
+    if (!open || !productsBySlug.size) return;
     setSections((rows) =>
       rows.map((section) => ({
         ...section,
@@ -513,7 +570,7 @@ function HappyHourFormSheet({
         }),
       })),
     );
-  }
+  }, [open, productsBySlug]);
 
   const updateSection = (index: number, patch: Partial<SectionDraft>) =>
     setSections((rows) => rows.map((row, i) => (i === index ? { ...row, ...patch } : row)));
@@ -527,6 +584,13 @@ function HappyHourFormSheet({
               deals: row.deals.map((deal, j) => (j === dealIndex ? { ...deal, ...patch } : deal)),
             }
           : row,
+      ),
+    );
+
+  const removeDeal = (sectionIndex: number, dealIndex: number) =>
+    setSections((rows) =>
+      rows.map((row, i) =>
+        i === sectionIndex ? { ...row, deals: row.deals.filter((_, j) => j !== dealIndex) } : row,
       ),
     );
 
@@ -547,26 +611,29 @@ function HappyHourFormSheet({
     );
   };
 
-  const addCategoryProducts = (sectionIndex: number) => {
+  const addCategoryProducts = async (sectionIndex: number, categoryIdOverride?: string) => {
     const section = sections[sectionIndex];
-    if (!section?.category_id) {
+    const categoryId = categoryIdOverride ?? section?.category_id;
+    if (!section || !categoryId) {
       toast.error("Select a category first");
       return;
     }
-    const value = Number(section.discount_value);
-    if (!Number.isFinite(value) || value <= 0) {
-      toast.error("Set a valid discount percent or ৳ amount");
-      return;
-    }
-    const pool = productsForCategory(products, section.category_id);
+    const pool = productsForCategory(products, categoryId);
     if (pool.length === 0) {
       toast.error("No catalog products in this category");
       return;
     }
+    const picked = pool.slice(0, CATEGORY_ADD_LIMIT);
+    let referencePrices: Record<string, number> = {};
+    try {
+      referencePrices = await fetchReferencePrices(picked.map((p) => p.slug));
+    } catch {
+      // Reference lookup is a convenience default — fall back to full price.
+    }
     const deals: DealDraft[] = [];
     let skipped = 0;
-    for (const product of pool.slice(0, CATEGORY_ADD_LIMIT)) {
-      const deal = dealFromProduct(product, section.discount_mode, section.discount_value);
+    for (const product of picked) {
+      const deal = dealFromProduct(product, referencePrices[product.slug] ?? null);
       if (!deal) {
         skipped += 1;
         continue;
@@ -574,38 +641,29 @@ function HappyHourFormSheet({
       deals.push(deal);
     }
     if (deals.length === 0) {
-      toast.error("Discount too high — no valid offer prices");
+      toast.error("No valid products to add");
       return;
     }
     mergeDeals(sectionIndex, deals);
     const extra = pool.length > CATEGORY_ADD_LIMIT ? ` (first ${CATEGORY_ADD_LIMIT})` : "";
     toast.success(`Added ${deals.length} product${deals.length === 1 ? "" : "s"}${extra}`);
-    if (skipped) toast.message(`${skipped} skipped (discount ≥ regular price)`);
+    if (skipped) toast.message(`${skipped} skipped (invalid regular price)`);
   };
 
   const applyDiscountToSection = (sectionIndex: number) => {
     const section = sections[sectionIndex];
     if (!section) return;
-    const next = section.deals
-      .map((deal) => {
-        const product = productsBySlug.get(deal.product_slug);
-        if (product) {
-          return (
-            dealFromProduct(product, section.discount_mode, section.discount_value, deal.note) ||
-            deal
-          );
-        }
-        const regular = Number(deal.regular_price);
-        const offer = calcOfferPrice(regular, section.discount_mode, section.discount_value);
-        if (offer == null) return deal;
-        return { ...deal, offer_price: String(offer) };
-      })
-      .filter(Boolean) as DealDraft[];
+    const next = section.deals.map((deal) => {
+      const regular = Number(deal.regular_price);
+      const offer = calcOfferPrice(regular, section.discount_mode, section.discount_value);
+      if (offer == null) return deal;
+      return { ...deal, offer_price: String(offer) };
+    });
     mergeDeals(sectionIndex, next, true);
     toast.success("Discount re-applied to section deals");
   };
 
-  const addPickedProduct = (sectionIndex: number, productId: string) => {
+  const addPickedProduct = async (sectionIndex: number, productId: string) => {
     if (!productId) return;
     const section = sections[sectionIndex];
     const product = products.find((p) => p.id === productId);
@@ -615,9 +673,16 @@ function HappyHourFormSheet({
       setPickProductId((prev) => ({ ...prev, [sectionIndex]: "" }));
       return;
     }
-    const deal = dealFromProduct(product, section.discount_mode, section.discount_value);
+    let referencePrice: number | null = null;
+    try {
+      const prices = await fetchReferencePrices([product.slug]);
+      referencePrice = prices[product.slug] ?? null;
+    } catch {
+      // Reference lookup is a convenience default — fall back to full price.
+    }
+    const deal = dealFromProduct(product, referencePrice);
     if (!deal) {
-      toast.error("Discount must leave offer price below regular price");
+      toast.error("This product has no valid regular price");
       return;
     }
     mergeDeals(sectionIndex, [deal]);
@@ -645,6 +710,19 @@ function HappyHourFormSheet({
     return extras.length ? [...categories, ...extras] : categories;
   }, [categories, sections]);
 
+  const sectionDragSensors = useSensors(
+    useSensor(PointerSensor, { activationConstraint: { distance: 6 } }),
+  );
+  const sectionIds = useMemo(() => sections.map((s) => s.id), [sections]);
+  const handleSectionDragEnd = (event: DragEndEvent) => {
+    const { active, over } = event;
+    if (!over || active.id === over.id) return;
+    const oldIndex = sections.findIndex((s) => s.id === active.id);
+    const newIndex = sections.findIndex((s) => s.id === over.id);
+    if (oldIndex < 0 || newIndex < 0) return;
+    setSections((rows) => arrayMove(rows, oldIndex, newIndex));
+  };
+
   return (
     <Sheet open={open} onOpenChange={onOpenChange}>
       <SheetContent
@@ -669,10 +747,12 @@ function HappyHourFormSheet({
             <Input className="rounded-none" value={subtitle} onChange={(e) => setSubtitle(e.target.value)} />
           </Field>
           <Field label="Description">
-            <Textarea
-              className="min-h-[80px] rounded-none"
+            <AgaincartClassicEditor
               value={description}
-              onChange={(e) => setDescription(e.target.value)}
+              onChange={setDescription}
+              placeholder="Happy Hour description…"
+              minRows={3}
+              fieldLabel="Description"
             />
           </Field>
           <Field label="Outlet label">
@@ -732,207 +812,156 @@ function HappyHourFormSheet({
             </Field>
           </div>
 
-          <div className="space-y-3 border border-border p-3">
-            <div className="flex items-center justify-between">
-              <p className="text-xs font-semibold text-foreground">Sections & deals</p>
-              <Button
-                type="button"
-                size="sm"
-                variant="outline"
-                className="h-7 rounded-none"
-                onClick={() => setSections((rows) => [...rows, emptySection()])}
-              >
-                Add section
-              </Button>
+          <div className="space-y-2 border border-border p-3">
+            <div className="flex items-center justify-between gap-2">
+              <p className="text-xs font-semibold text-foreground">Sections</p>
+              <div className="flex gap-2">
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="outline"
+                  className="h-7 rounded-none"
+                  disabled={sections.every((s) => s.deals.length === 0)}
+                  onClick={() => setAllProductsOpen(true)}
+                >
+                  View Offer Products
+                </Button>
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="outline"
+                  className="h-7 rounded-none"
+                  onClick={() => {
+                    const newIndex = sections.length;
+                    setSections((rows) => [...rows, emptySection()]);
+                    setEditingSectionIndex(newIndex);
+                  }}
+                >
+                  <Plus className="mr-1 h-3.5 w-3.5" />
+                  Add section
+                </Button>
+              </div>
             </div>
-            <p className="text-[11px] text-muted-foreground">
-              Pick a category or product, set % or ৳ off, then add — offer prices calculate automatically.
-            </p>
             {(categoriesLoading || productsLoading) && (
               <p className="text-xs text-muted-foreground">Loading catalog…</p>
             )}
 
-            {sections.map((section, sIndex) => {
-              const categoryProducts = productsForCategory(products, section.category_id);
-              const pickerProducts = section.category_id
-                ? categoryProducts.length
-                  ? categoryProducts
-                  : products
-                : products;
-              return (
-                <div key={sIndex} className="space-y-2 border border-border bg-muted/20 p-2">
-                  <div className="grid grid-cols-[1fr_auto] gap-2">
-                    <Input
-                      className="rounded-none"
-                      placeholder="Section label"
-                      value={section.label}
-                      onChange={(e) =>
-                        updateSection(sIndex, {
-                          label: e.target.value,
-                          key:
-                            section.key ||
-                            e.target.value
-                              .toLowerCase()
-                              .replace(/[^a-z0-9]+/g, "-")
-                              .replace(/(^-|-$)/g, ""),
-                        })
-                      }
-                    />
-                    <Button
-                      type="button"
-                      variant="ghost"
-                      size="icon"
-                      className="h-9 w-9 rounded-none"
-                      onClick={() => setSections((rows) => rows.filter((_, i) => i !== sIndex))}
-                    >
-                      <Trash2 className="h-3.5 w-3.5" />
-                    </Button>
-                  </div>
-
-                  <Field label="Category">
-                    <CategoryCombobox
-                      categories={categoriesForPicker}
-                      value={section.category_id}
-                      placeholder="Search category…"
-                      className="w-full"
-                      onChange={(id, name) => {
-                        const cat = categoriesForPicker.find((c) => c.id === id);
-                        const prev = categoriesForPicker.find((c) => c.id === section.category_id);
-                        const shouldFillLabel =
-                          !section.label.trim() ||
-                          (prev && section.label.trim() === prev.name.trim());
-                        updateSection(sIndex, {
-                          category_id: id,
-                          key: cat?.slug || section.key,
-                          label: shouldFillLabel && name ? name : section.label,
-                        });
-                      }}
-                    />
-                  </Field>
-
-                  <div className="grid grid-cols-[120px_1fr] gap-2">
-                    <Field label="Discount type">
-                      <Select
-                        className="rounded-none"
-                        value={section.discount_mode}
-                        onChange={(e) =>
-                          updateSection(sIndex, {
-                            discount_mode: e.target.value as DiscountMode,
-                          })
-                        }
-                      >
-                        <option value="percent">Percent %</option>
-                        <option value="amount">Fixed ৳ off</option>
-                      </Select>
-                    </Field>
-                    <Field label={section.discount_mode === "percent" ? "Percent off" : "৳ amount off"}>
-                      <Input
-                        type="number"
-                        min={1}
-                        className="rounded-none"
-                        value={section.discount_value}
-                        onChange={(e) => updateSection(sIndex, { discount_value: e.target.value })}
-                        placeholder={section.discount_mode === "percent" ? "10" : "500"}
-                      />
-                    </Field>
-                  </div>
-
-                  <div className="flex flex-wrap gap-2">
-                    <Button
-                      type="button"
-                      size="sm"
-                      variant="outline"
-                      className="h-7 rounded-none"
-                      onClick={() => addCategoryProducts(sIndex)}
-                    >
-                      Add category products
-                      {section.category_id ? ` (${categoryProducts.length})` : ""}
-                    </Button>
-                    <Button
-                      type="button"
-                      size="sm"
-                      variant="outline"
-                      className="h-7 rounded-none"
-                      disabled={section.deals.length === 0}
-                      onClick={() => applyDiscountToSection(sIndex)}
-                    >
-                      Re-apply discount
-                    </Button>
-                  </div>
-
-                  <Field label="Add single product">
-                    <ProductCombobox
-                      products={pickerProducts}
-                      value={pickProductId[sIndex] || ""}
-                      placeholder="Search product…"
-                      onChange={(id) => {
-                        setPickProductId((prev) => ({ ...prev, [sIndex]: id }));
-                        if (id) addPickedProduct(sIndex, id);
-                      }}
-                    />
-                  </Field>
-
-                  {section.deals.length === 0 ? (
-                    <p className="text-[11px] text-muted-foreground">No deals yet.</p>
-                  ) : (
-                    <div className="space-y-1.5">
-                      {section.deals.map((deal, dIndex) => (
-                        <div
-                          key={`${deal.product_slug}-${dIndex}`}
-                          className="grid grid-cols-[1.5fr_0.8fr_auto] items-start gap-2 border border-border/60 bg-background p-1.5"
-                        >
-                          <div className="min-w-0">
+            {sections.length === 0 ? (
+              <p className="text-[11px] text-muted-foreground">
+                No sections yet. Add one, then pick a category or product inside it.
+              </p>
+            ) : (
+              <DndContext
+                sensors={sectionDragSensors}
+                collisionDetection={closestCenter}
+                onDragEnd={handleSectionDragEnd}
+              >
+                <SortableContext items={sectionIds} strategy={verticalListSortingStrategy}>
+                  <div className="space-y-1.5">
+                    {sections.map((section, sIndex) => {
+                      const category = categoriesForPicker.find((c) => c.id === section.category_id);
+                      return (
+                        <SortableSectionRow key={section.id} id={section.id}>
+                          <button
+                            type="button"
+                            className="min-w-0 flex-1 text-left"
+                            onClick={() => setEditingSectionIndex(sIndex)}
+                          >
                             <p className="truncate text-xs font-medium text-foreground">
-                              {deal.product_name || deal.product_slug}
+                              {section.label || "Untitled section"}
                             </p>
                             <p className="truncate text-[10px] text-muted-foreground">
-                              {deal.product_slug}
-                              {deal.regular_price ? ` · was ${money(deal.regular_price)}` : ""}
+                              {section.deals.length} product{section.deals.length === 1 ? "" : "s"}
+                              {category ? ` · ${category.name}` : ""}
                             </p>
-                            <Input
-                              className="mt-1 h-7 rounded-none text-[11px]"
-                              placeholder="Note (optional)"
-                              value={deal.note}
-                              onChange={(e) => updateDeal(sIndex, dIndex, { note: e.target.value })}
-                            />
-                          </div>
-                          <Field label="Offer ৳">
-                            <Input
-                              className="rounded-none"
-                              type="number"
-                              value={deal.offer_price}
-                              onChange={(e) =>
-                                updateDeal(sIndex, dIndex, { offer_price: e.target.value })
-                              }
-                            />
-                          </Field>
+                          </button>
+                          <Button
+                            type="button"
+                            size="sm"
+                            variant="outline"
+                            className="h-7 rounded-none"
+                            onClick={() => setEditingSectionIndex(sIndex)}
+                          >
+                            <Pencil className="mr-1 h-3.5 w-3.5" />
+                            Edit
+                          </Button>
                           <Button
                             type="button"
                             variant="ghost"
                             size="icon"
-                            className="mt-5 h-8 w-8 rounded-none"
-                            onClick={() =>
-                              updateSection(sIndex, {
-                                deals: section.deals.filter((_, i) => i !== dIndex),
-                              })
-                            }
+                            className="h-7 w-7 rounded-none"
+                            onClick={() => setSections((rows) => rows.filter((_, i) => i !== sIndex))}
                           >
                             <Trash2 className="h-3.5 w-3.5" />
                           </Button>
-                        </div>
-                      ))}
-                    </div>
-                  )}
-                </div>
-              );
-            })}
+                        </SortableSectionRow>
+                      );
+                    })}
+                  </div>
+                </SortableContext>
+              </DndContext>
+            )}
           </div>
 
-          <Field label="Terms (one per line)">
-            <Textarea
-              className="min-h-[120px] rounded-none font-mono text-xs"
+          <SectionEditorSheet
+            open={editingSectionIndex !== null}
+            section={editingSectionIndex !== null ? sections[editingSectionIndex] ?? null : null}
+            categoriesForPicker={categoriesForPicker}
+            products={products}
+            productsBySlug={productsBySlug}
+            pickProductId={editingSectionIndex !== null ? pickProductId[editingSectionIndex] || "" : ""}
+            onPickProductId={(id) => {
+              if (editingSectionIndex === null) return;
+              setPickProductId((prev) => ({ ...prev, [editingSectionIndex]: id }));
+            }}
+            onUpdateSection={(patch) => {
+              if (editingSectionIndex !== null) updateSection(editingSectionIndex, patch);
+            }}
+            onUpdateDeal={(dealIndex, patch) => {
+              if (editingSectionIndex !== null) updateDeal(editingSectionIndex, dealIndex, patch);
+            }}
+            onRemoveDeal={(dealIndex) => {
+              if (editingSectionIndex !== null) removeDeal(editingSectionIndex, dealIndex);
+            }}
+            onAddCategoryProducts={() => {
+              if (editingSectionIndex !== null) addCategoryProducts(editingSectionIndex);
+            }}
+            onCategorySelected={(categoryId) => {
+              if (editingSectionIndex !== null) addCategoryProducts(editingSectionIndex, categoryId);
+            }}
+            onApplyDiscount={() => {
+              if (editingSectionIndex !== null) applyDiscountToSection(editingSectionIndex);
+            }}
+            onAddPickedProduct={(id) => {
+              if (editingSectionIndex !== null) addPickedProduct(editingSectionIndex, id);
+            }}
+            onClose={() => {
+              if (editingSectionIndex !== null) {
+                const s = sections[editingSectionIndex];
+                if (s && !s.label.trim() && s.deals.length === 0) {
+                  setSections((rows) => rows.filter((_, i) => i !== editingSectionIndex));
+                }
+              }
+              setEditingSectionIndex(null);
+            }}
+          />
+
+          <AllProductsSheet
+            open={allProductsOpen}
+            sections={sections}
+            productsBySlug={productsBySlug}
+            onUpdateDeal={updateDeal}
+            onRemoveDeal={removeDeal}
+            onClose={() => setAllProductsOpen(false)}
+          />
+
+          <Field label="Terms (each paragraph is one term)">
+            <AgaincartClassicEditor
               value={termsText}
-              onChange={(e) => setTermsText(e.target.value)}
+              onChange={setTermsText}
+              placeholder="One term per paragraph…"
+              minRows={4}
+              fieldLabel="Terms"
             />
           </Field>
         </div>
@@ -967,6 +996,10 @@ function HappyHourFormSheet({
                         product_slug: d.product_slug.trim(),
                         offer_price: Number(d.offer_price),
                         note: d.note.trim() || null,
+                        priority: Number(d.priority) || 0,
+                        quantity:
+                          d.quantity.trim() === "" ? null : Number(d.quantity) || 0,
+                        enabled: d.enabled,
                         sort_order: j,
                       })),
                   }))
@@ -986,10 +1019,7 @@ function HappyHourFormSheet({
                   ends_at: toIso(endsAt),
                   daily_start_hour: Math.min(24, Math.max(0, Number(dailyStart) || 22)),
                   daily_end_hour: Math.min(24, Math.max(0, Number(dailyEnd) || 24)),
-                  terms: termsText
-                    .split("\n")
-                    .map((t) => t.trim())
-                    .filter(Boolean),
+                  terms: editorHtmlToTerms(termsText),
                   sections: cleanSections,
                 };
                 setSaving(true);
@@ -1024,5 +1054,578 @@ function Field({ label, children }: { label: string; children: React.ReactNode }
       <Label className="text-xs text-muted-foreground">{label}</Label>
       {children}
     </div>
+  );
+}
+
+/** One drag-and-drop-able row in the section list. */
+function SortableSectionRow({ id, children }: { id: string; children: React.ReactNode }) {
+  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
+    id,
+  });
+  return (
+    <div
+      ref={setNodeRef}
+      style={{ transform: CSS.Transform.toString(transform), transition }}
+      className={cn(
+        "flex items-center justify-between gap-2 border border-border bg-muted/20 px-2.5 py-2",
+        isDragging && "z-10 opacity-90 shadow-md ring-1 ring-primary/40",
+      )}
+    >
+      <button
+        type="button"
+        className="shrink-0 touch-none px-0.5 text-muted-foreground hover:text-foreground"
+        aria-label="Drag to reorder"
+        {...attributes}
+        {...listeners}
+      >
+        <GripVertical className="h-4 w-4 cursor-grab active:cursor-grabbing" />
+      </button>
+      {children}
+    </div>
+  );
+}
+
+type DealRow = {
+  key: string;
+  deal: DealDraft;
+  sectionLabel?: string;
+  onUpdate: (patch: Partial<DealDraft>) => void;
+  onRemove: () => void;
+};
+
+/** Shared product-deal table — used inside a single section's editor and in the
+    cross-section "View Offer Products" drawer (which adds the Section column). */
+function DealsTable({
+  rows,
+  productsBySlug,
+  showSection = false,
+}: {
+  rows: DealRow[];
+  productsBySlug: Map<string, Product>;
+  showSection?: boolean;
+}) {
+  const scrollRef = useRef<HTMLDivElement>(null);
+  const [canScrollLeft, setCanScrollLeft] = useState(false);
+  const [canScrollRight, setCanScrollRight] = useState(false);
+
+  const updateScrollFades = () => {
+    const el = scrollRef.current;
+    if (!el) return;
+    setCanScrollLeft(el.scrollLeft > 2);
+    setCanScrollRight(el.scrollLeft + el.clientWidth < el.scrollWidth - 2);
+  };
+
+  useEffect(() => {
+    updateScrollFades();
+    const el = scrollRef.current;
+    if (!el) return;
+    el.addEventListener("scroll", updateScrollFades);
+    window.addEventListener("resize", updateScrollFades);
+    return () => {
+      el.removeEventListener("scroll", updateScrollFades);
+      window.removeEventListener("resize", updateScrollFades);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- re-measure whenever the row count changes
+  }, [rows.length]);
+
+  if (rows.length === 0) {
+    return <p className="text-[11px] text-muted-foreground">No deals yet.</p>;
+  }
+  return (
+    <div className="relative">
+      <div
+        ref={scrollRef}
+        className="overflow-x-auto border border-border/60 [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
+      >
+      <table className="w-full min-w-[560px] table-fixed border-collapse text-[11px]">
+        <thead>
+          <tr className="bg-muted/40 text-left">
+            <th className="w-9 px-1.5 py-1 font-medium" />
+            <th className="px-1.5 py-1 font-medium">Product</th>
+            {showSection ? <th className="w-24 px-1.5 py-1 font-medium">Section</th> : null}
+            <th className="w-16 px-1.5 py-1 font-medium">Regular</th>
+            <th className="w-10 px-1.5 py-1 font-medium">Qty</th>
+            <th className="w-24 px-1.5 py-1 font-medium">Stock</th>
+            <th className="w-28 px-1.5 py-1 font-medium">Offer ৳</th>
+            <th className="w-14 px-1.5 py-1 font-medium">Priority</th>
+            <th className="w-28 px-1.5 py-1 font-medium">Quantity</th>
+            <th className="w-14 px-1.5 py-1 font-medium">Enabled</th>
+            <th className="w-8 px-1.5 py-1" />
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((row) => {
+            const { deal } = row;
+            const product = productsBySlug.get(deal.product_slug);
+            return (
+              <tr
+                key={row.key}
+                className={cn(
+                  "border-t border-border/60 align-top",
+                  !deal.enabled && "bg-muted/30 opacity-60",
+                )}
+              >
+                <td className="px-1.5 py-1.5">
+                  {product?.thumbnail ? (
+                    // eslint-disable-next-line @next/next/no-img-element
+                    <img
+                      src={product.thumbnail}
+                      alt=""
+                      className="h-7 w-7 rounded-none border border-border object-cover"
+                    />
+                  ) : (
+                    <div className="h-7 w-7 rounded-none border border-dashed border-border bg-muted/30" />
+                  )}
+                </td>
+                <td className="min-w-0 px-1.5 py-1.5">
+                  <p className="truncate font-medium text-foreground">
+                    {deal.product_name || deal.product_slug}
+                  </p>
+                  <p className="truncate text-[10px] text-muted-foreground">{deal.product_slug}</p>
+                  <Input
+                    className="mt-1 h-6 rounded-none text-[10px]"
+                    placeholder="Note (optional)"
+                    value={deal.note}
+                    onChange={(e) => row.onUpdate({ note: e.target.value })}
+                  />
+                </td>
+                {showSection ? (
+                  <td className="truncate px-1.5 py-1.5 text-muted-foreground">{row.sectionLabel}</td>
+                ) : null}
+                <td className="px-1.5 py-1.5 text-muted-foreground">
+                  {deal.regular_price ? money(deal.regular_price) : "—"}
+                </td>
+                <td className="px-1.5 py-1.5 text-muted-foreground">{product ? product.stock : "—"}</td>
+                <td className="px-1.5 py-1.5">
+                  {product ? (
+                    <Badge
+                      variant={product.stockStatus === "In Stock" ? "default" : "secondary"}
+                      className="rounded-none whitespace-nowrap"
+                    >
+                      {product.stockStatus}
+                    </Badge>
+                  ) : (
+                    "—"
+                  )}
+                </td>
+                <td className="px-1.5 py-1.5">
+                  <Input
+                    className="h-7 rounded-none [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
+                    type="number"
+                    value={deal.offer_price}
+                    onChange={(e) => row.onUpdate({ offer_price: e.target.value })}
+                  />
+                </td>
+                <td className="px-1.5 py-1.5">
+                  <Input
+                    className="h-7 rounded-none [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
+                    type="number"
+                    value={deal.priority}
+                    onChange={(e) => row.onUpdate({ priority: e.target.value })}
+                  />
+                </td>
+                <td className="px-1.5 py-1.5">
+                  <Input
+                    className="h-7 rounded-none [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
+                    type="number"
+                    min={0}
+                    value={deal.quantity}
+                    onChange={(e) => row.onUpdate({ quantity: e.target.value })}
+                    placeholder="Unlimited"
+                    title="Deal quota, separate from stock. Leave blank for unlimited. Once sold out this deal auto-disables."
+                  />
+                  {deal.quantity.trim() !== "" ? (
+                    <p className="mt-0.5 whitespace-nowrap text-[10px] text-muted-foreground">
+                      Sold {deal.quantity_sold}/{deal.quantity}
+                    </p>
+                  ) : null}
+                </td>
+                <td className="px-1.5 py-1.5 text-center">
+                  <input
+                    type="checkbox"
+                    checked={deal.enabled}
+                    onChange={(e) => row.onUpdate({ enabled: e.target.checked })}
+                    title={
+                      deal.enabled
+                        ? "Enabled — applies its price"
+                        : "Disabled — price does not apply, but the row stays here"
+                    }
+                    className="h-4 w-4 accent-primary"
+                  />
+                </td>
+                <td className="px-1.5 py-1.5">
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon"
+                    className="h-7 w-7 rounded-none"
+                    onClick={row.onRemove}
+                  >
+                    <Trash2 className="h-3.5 w-3.5" />
+                  </Button>
+                </td>
+              </tr>
+            );
+          })}
+        </tbody>
+      </table>
+      <p className="border-t border-border/60 bg-muted/20 px-2 py-1 text-[10px] text-muted-foreground">
+        Lower priority number shows first when a product appears more than once.
+      </p>
+      </div>
+      {canScrollLeft ? (
+        <div className="pointer-events-none absolute inset-y-0 left-0 w-6 bg-gradient-to-r from-background to-transparent" />
+      ) : null}
+      {canScrollRight ? (
+        <div className="pointer-events-none absolute inset-y-0 right-0 w-6 bg-gradient-to-l from-background to-transparent" />
+      ) : null}
+    </div>
+  );
+}
+
+/** Popup drawer for one section: name it, pick a category or products, set the
+    discount, and edit each product's offer price / priority. Opened from the
+    section-list drawer via "Add section" or a section row's "Edit". */
+function SectionEditorSheet({
+  open,
+  section,
+  categoriesForPicker,
+  products,
+  productsBySlug,
+  pickProductId,
+  onPickProductId,
+  onUpdateSection,
+  onUpdateDeal,
+  onRemoveDeal,
+  onAddCategoryProducts,
+  onCategorySelected,
+  onApplyDiscount,
+  onAddPickedProduct,
+  onClose,
+}: {
+  open: boolean;
+  section: SectionDraft | null;
+  categoriesForPicker: Category[];
+  products: Product[];
+  productsBySlug: Map<string, Product>;
+  pickProductId: string;
+  onPickProductId: (id: string) => void;
+  onUpdateSection: (patch: Partial<SectionDraft>) => void;
+  onUpdateDeal: (dealIndex: number, patch: Partial<DealDraft>) => void;
+  onRemoveDeal: (dealIndex: number) => void;
+  onAddCategoryProducts: () => void;
+  onCategorySelected: (categoryId: string) => void;
+  onApplyDiscount: () => void;
+  onAddPickedProduct: (productId: string) => void;
+  onClose: () => void;
+}) {
+  const categoryProducts = section ? productsForCategory(products, section.category_id) : [];
+  const pickerProducts = section?.category_id
+    ? categoryProducts.length
+      ? categoryProducts
+      : products
+    : products;
+
+  const rows: DealRow[] =
+    section?.deals.map((deal, dIndex) => ({
+      key: `${deal.product_slug}-${dIndex}`,
+      deal,
+      onUpdate: (patch: Partial<DealDraft>) => onUpdateDeal(dIndex, patch),
+      onRemove: () => onRemoveDeal(dIndex),
+    })) ?? [];
+
+  return (
+    <Sheet
+      open={open}
+      onOpenChange={(o) => {
+        if (!o) onClose();
+      }}
+    >
+      <SheetContent
+        side="right"
+        resizable
+        closeButton="chevron"
+        className="flex w-[640px] min-w-[320px] max-w-[900px] flex-col rounded-none p-0"
+      >
+        <SheetHeader className="border-b border-border px-4 py-3">
+          <SheetTitle className="text-sm font-semibold">
+            {section?.label ? section.label : "New section"}
+          </SheetTitle>
+        </SheetHeader>
+        {section ? (
+          <div className="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto px-4 py-4">
+            <Field label="Section label">
+              <Input
+                className="rounded-none"
+                placeholder="e.g. Monitor"
+                value={section.label}
+                onChange={(e) =>
+                  onUpdateSection({
+                    label: e.target.value,
+                    key:
+                      section.key ||
+                      e.target.value
+                        .toLowerCase()
+                        .replace(/[^a-z0-9]+/g, "-")
+                        .replace(/(^-|-$)/g, ""),
+                  })
+                }
+              />
+            </Field>
+
+            <Field label="Category">
+              <CategoryCombobox
+                categories={categoriesForPicker}
+                value={section.category_id}
+                placeholder="Search category…"
+                className="w-full"
+                onChange={(id, name) => {
+                  const cat = categoriesForPicker.find((c) => c.id === id);
+                  const prev = categoriesForPicker.find((c) => c.id === section.category_id);
+                  const shouldFillLabel =
+                    !section.label.trim() || (prev && section.label.trim() === prev.name.trim());
+                  onUpdateSection({
+                    category_id: id,
+                    key: cat?.slug || section.key,
+                    label: shouldFillLabel && name ? name : section.label,
+                  });
+                  if (id) onCategorySelected(id);
+                }}
+              />
+            </Field>
+
+            <div className="grid grid-cols-[120px_1fr] gap-2">
+              <Field label="Discount type">
+                <Select
+                  className="rounded-none"
+                  value={section.discount_mode}
+                  onChange={(e) =>
+                    onUpdateSection({ discount_mode: e.target.value as DiscountMode })
+                  }
+                >
+                  <option value="percent">Percent %</option>
+                  <option value="amount">Fixed ৳ off</option>
+                </Select>
+              </Field>
+              <Field label={section.discount_mode === "percent" ? "Percent off" : "৳ amount off"}>
+                <Input
+                  type="number"
+                  min={1}
+                  className="rounded-none"
+                  value={section.discount_value}
+                  onChange={(e) => onUpdateSection({ discount_value: e.target.value })}
+                  placeholder={section.discount_mode === "percent" ? "10" : "500"}
+                />
+              </Field>
+            </div>
+
+            <div className="flex flex-wrap gap-2">
+              <Button
+                type="button"
+                size="sm"
+                variant="outline"
+                className="h-7 rounded-none"
+                onClick={onAddCategoryProducts}
+              >
+                Add category products
+                {section.category_id ? ` (${categoryProducts.length})` : ""}
+              </Button>
+              <Button
+                type="button"
+                size="sm"
+                variant="outline"
+                className="h-7 rounded-none"
+                disabled={section.deals.length === 0}
+                onClick={onApplyDiscount}
+              >
+                Re-apply discount
+              </Button>
+            </div>
+
+            <Field label="Add single product">
+              <ProductCombobox
+                products={pickerProducts}
+                value={pickProductId}
+                placeholder="Search product…"
+                onChange={(id) => {
+                  onPickProductId(id);
+                  if (id) onAddPickedProduct(id);
+                }}
+              />
+            </Field>
+
+            <DealsTable rows={rows} productsBySlug={productsBySlug} />
+          </div>
+        ) : null}
+        <div className="flex justify-end gap-2 border-t border-border px-4 py-3">
+          <Button className="rounded-none" onClick={onClose}>
+            Done
+          </Button>
+        </div>
+      </SheetContent>
+    </Sheet>
+  );
+}
+
+/** "View Offer Products" drawer: every product across every section in one
+    flat, editable table so the admin doesn't have to open each section to
+    tweak an offer price. */
+function AllProductsSheet({
+  open,
+  sections,
+  productsBySlug,
+  onUpdateDeal,
+  onRemoveDeal,
+  onClose,
+}: {
+  open: boolean;
+  sections: SectionDraft[];
+  productsBySlug: Map<string, Product>;
+  onUpdateDeal: (sectionIndex: number, dealIndex: number, patch: Partial<DealDraft>) => void;
+  onRemoveDeal: (sectionIndex: number, dealIndex: number) => void;
+  onClose: () => void;
+}) {
+  const [search, setSearch] = useState("");
+  const [sectionFilter, setSectionFilter] = useState("all");
+  const [discountMode, setDiscountMode] = useState<DiscountMode>("percent");
+  const [discountValue, setDiscountValue] = useState("10");
+
+  useEffect(() => {
+    if (!open) {
+      setSearch("");
+      setSectionFilter("all");
+      setDiscountMode("percent");
+      setDiscountValue("10");
+    }
+  }, [open]);
+
+  const allRows: DealRow[] = sections.flatMap((section, sIndex) =>
+    section.deals.map((deal, dIndex) => ({
+      key: `${sIndex}-${deal.product_slug}-${dIndex}`,
+      deal,
+      sectionLabel: section.label || "Untitled section",
+      onUpdate: (patch: Partial<DealDraft>) => onUpdateDeal(sIndex, dIndex, patch),
+      onRemove: () => onRemoveDeal(sIndex, dIndex),
+    })),
+  );
+
+  const sectionOptions = useMemo(
+    () => Array.from(new Set(sections.map((s) => s.label || "Untitled section"))),
+    [sections],
+  );
+
+  const rows = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    return allRows.filter((row) => {
+      if (sectionFilter !== "all" && row.sectionLabel !== sectionFilter) return false;
+      if (!q) return true;
+      return (
+        row.deal.product_name.toLowerCase().includes(q) ||
+        row.deal.product_slug.toLowerCase().includes(q)
+      );
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [allRows, search, sectionFilter]);
+
+  const applyDiscountToShown = () => {
+    let applied = 0;
+    let skipped = 0;
+    for (const row of rows) {
+      const regular = Number(row.deal.regular_price);
+      const offer = calcOfferPrice(regular, discountMode, discountValue);
+      if (offer == null) {
+        skipped += 1;
+        continue;
+      }
+      row.onUpdate({ offer_price: String(offer) });
+      applied += 1;
+    }
+    if (applied === 0) {
+      toast.error("Discount too high — no valid offer prices");
+      return;
+    }
+    toast.success(`Discount applied to ${applied} product${applied === 1 ? "" : "s"}`);
+    if (skipped) toast.message(`${skipped} skipped (discount ≥ regular price)`);
+  };
+
+  return (
+    <Sheet
+      open={open}
+      onOpenChange={(o) => {
+        if (!o) onClose();
+      }}
+    >
+      <SheetContent
+        side="right"
+        resizable
+        closeButton="chevron"
+        className="flex w-[760px] min-w-[400px] max-w-[1000px] flex-col rounded-none p-0"
+      >
+        <SheetHeader className="border-b border-border px-4 py-3">
+          <SheetTitle className="text-sm font-semibold">
+            All offer products ({rows.length}
+            {rows.length !== allRows.length ? ` of ${allRows.length}` : ""})
+          </SheetTitle>
+        </SheetHeader>
+        <div className="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto px-4 py-4">
+          <div className="flex flex-wrap items-end gap-2 border border-border/60 bg-muted/20 p-2">
+            <Field label="Discount type">
+              <Select
+                className="h-8 w-[110px] rounded-none"
+                value={discountMode}
+                onChange={(e) => setDiscountMode(e.target.value as DiscountMode)}
+              >
+                <option value="percent">Percent %</option>
+                <option value="amount">৳ amount</option>
+              </Select>
+            </Field>
+            <Field label={discountMode === "percent" ? "Percent off" : "৳ amount off"}>
+              <Input
+                className="h-8 w-[100px] rounded-none"
+                type="number"
+                value={discountValue}
+                onChange={(e) => setDiscountValue(e.target.value)}
+                placeholder={discountMode === "percent" ? "10" : "500"}
+              />
+            </Field>
+            <Button
+              type="button"
+              variant="outline"
+              className="h-8 rounded-none"
+              disabled={rows.length === 0}
+              onClick={applyDiscountToShown}
+            >
+              Apply to shown ({rows.length})
+            </Button>
+          </div>
+          <div className="flex flex-wrap gap-2">
+            <Input
+              className="h-8 w-[220px] rounded-none"
+              placeholder="Search product…"
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+            />
+            <Select
+              className="h-8 w-[180px] rounded-none"
+              value={sectionFilter}
+              onChange={(e) => setSectionFilter(e.target.value)}
+            >
+              <option value="all">All sections</option>
+              {sectionOptions.map((label) => (
+                <option key={label} value={label}>
+                  {label}
+                </option>
+              ))}
+            </Select>
+          </div>
+          <DealsTable rows={rows} productsBySlug={productsBySlug} showSection />
+        </div>
+        <div className="flex justify-end gap-2 border-t border-border px-4 py-3">
+          <Button className="rounded-none" onClick={onClose}>
+            Close
+          </Button>
+        </div>
+      </SheetContent>
+    </Sheet>
   );
 }

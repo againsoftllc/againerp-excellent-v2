@@ -730,3 +730,19 @@ export async function searchCatalogProducts(
   );
   return (res.data ?? []).map(apiProductToProduct);
 }
+
+/** slug -> currently active special price, for the slugs that have one. Lets a Happy Hour section default a new
+ * deal's offer price to whatever is already configured on the product. */
+export async function fetchReferencePrices(slugs: string[]): Promise<Record<string, number>> {
+  const unique = Array.from(new Set(slugs.filter(Boolean)));
+  if (unique.length === 0) return {};
+  const res = await apiFetch<{ data: Record<string, string | number> }>(
+    `/api/v1/catalog/products/reference-prices?slugs=${encodeURIComponent(unique.join(","))}`,
+  );
+  const out: Record<string, number> = {};
+  for (const [slug, price] of Object.entries(res.data || {})) {
+    const n = Number(price);
+    if (Number.isFinite(n) && n > 0) out[slug] = n;
+  }
+  return out;
+}

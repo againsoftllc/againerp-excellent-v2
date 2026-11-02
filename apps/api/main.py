@@ -512,6 +512,9 @@ def _bootstrap() -> None:
         ensure_excellent_columns()
         ensure_pickup_point_columns()
         ensure_catalog_product_special_columns()
+        from app.routers.marketing_happy_hours import ensure_marketing_happy_hour_columns
+
+        ensure_marketing_happy_hour_columns()
         ensure_catalog_stock_status_columns()
 
         ensure_workspace_site_company_id_column()

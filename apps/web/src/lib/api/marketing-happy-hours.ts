@@ -7,6 +7,13 @@ export type ApiHappyHourDeal = {
   product_slug: string;
   offer_price: number;
   note?: string | null;
+  priority: number;
+  /** Deal quota — null/undefined means unlimited. */
+  quantity?: number | null;
+  /** Server-managed, incremented at checkout. Read-only in the UI. */
+  quantity_sold?: number;
+  /** Auto-flips off once quantity sells out; the admin can also toggle it. */
+  enabled?: boolean;
   sort_order: number;
 };
 
@@ -58,6 +65,9 @@ export type HappyHourWriteInput = {
       product_slug: string;
       offer_price: number;
       note?: string | null;
+      priority?: number;
+      quantity?: number | null;
+      enabled?: boolean;
       sort_order?: number;
     }[];
   }[];
