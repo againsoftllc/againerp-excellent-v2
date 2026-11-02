@@ -54,6 +54,9 @@ export function SortableAttributeGrid({
 }: Props) {
   const [dragKey, setDragKey] = useState<string | null>(null);
   const [overKey, setOverKey] = useState<string | null>(null);
+  // a filter option being dragged to a new place in the same filter (the storefront lists the options in this order)
+  const [valueDrag, setValueDrag] = useState<{ attrKey: string; index: number } | null>(null);
+  const [valueOver, setValueOver] = useState<{ attrKey: string; index: number } | null>(null);
   const [valueDrafts, setValueDrafts] = useState<Record<string, string>>({});
   const [editing, setEditing] = useState<EditingValue | null>(null);
   const inputRefs = useRef<Record<string, HTMLInputElement | null>>({});
@@ -96,6 +99,19 @@ export function SortableAttributeGrid({
     update(key, { predefinedValues: [...attr.predefinedValues, draft] });
     setValueDrafts((d) => ({ ...d, [key]: "" }));
     inputRefs.current[key]?.focus();
+  };
+
+  const dropValue = (attrKey: string, to: number) => {
+    const from = valueDrag;
+    setValueDrag(null);
+    setValueOver(null);
+    if (!from || from.attrKey !== attrKey || from.index === to) return;
+    const attr = attributes.find((a) => a.key === attrKey);
+    if (!attr) return;
+    const next = [...attr.predefinedValues];
+    const [moved] = next.splice(from.index, 1);
+    next.splice(to, 0, moved);
+    update(attrKey, { predefinedValues: next });
   };
 
   const removeValue = (attrKey: string, val: string) => {
@@ -320,8 +336,30 @@ export function SortableAttributeGrid({
                   return (
                     <span
                       key={`${attr.key}-${index}-${val}`}
+                      draggable
+                      onDragStart={(e) => {
+                        e.stopPropagation();
+                        e.dataTransfer.effectAllowed = "move";
+                        e.dataTransfer.setData("text/plain", val); // Firefox starts no drag without data
+                        setValueDrag({ attrKey: attr.key, index });
+                      }}
+                      onDragEnd={() => { setValueDrag(null); setValueOver(null); }}
+                      onDragOver={(e) => {
+                        if (valueDrag?.attrKey !== attr.key) return;
+                        e.preventDefault();
+                        e.stopPropagation();
+                        setValueOver({ attrKey: attr.key, index });
+                      }}
+                      onDrop={(e) => {
+                        if (valueDrag?.attrKey !== attr.key) return;
+                        e.preventDefault();
+                        e.stopPropagation();
+                        dropValue(attr.key, index);
+                      }}
                       className={cn(
-                        "inline-flex items-center gap-0.5 rounded-none border px-1.5 py-0.5 text-[10px] font-medium",
+                        "inline-flex cursor-grab items-center gap-0.5 rounded-none border px-1.5 py-0.5 text-[10px] font-medium active:cursor-grabbing",
+                        valueDrag?.attrKey === attr.key && valueDrag.index === index && "opacity-40",
+                        valueOver?.attrKey === attr.key && valueOver.index === index && valueDrag?.index !== index && "ring-2 ring-primary/50",
                         locked
                           ? "border-amber-300 bg-amber-50 text-amber-900 dark:border-amber-800 dark:bg-amber-950/40 dark:text-amber-200"
                           : "border-sky-200 bg-sky-100/80 text-sky-800 dark:border-sky-800 dark:bg-sky-900/50 dark:text-sky-200",
@@ -329,7 +367,7 @@ export function SortableAttributeGrid({
                       title={
                         locked
                           ? "Used on products — remove from products before deleting"
-                          : "Click to edit"
+                          : "Click to edit · drag to reorder"
                       }
                     >
                       {attr.filterDisplayType === "color" ? (
@@ -351,13 +389,15 @@ export function SortableAttributeGrid({
                           {val}
                         </span>
                       ) : (
-                        <button
-                          type="button"
+                        <span
+                          role="button"
+                          tabIndex={0}
                           onClick={() => startEditValue(attr.key, index, val)}
-                          className="max-w-[10rem] truncate text-left hover:underline"
+                          onKeyDown={(e) => { if (e.key === "Enter") startEditValue(attr.key, index, val); }}
+                          className="max-w-[10rem] cursor-grab truncate text-left hover:underline"
                         >
                           {val}
-                        </button>
+                        </span>
                       )}
                       {locked ? null : (
                         <button

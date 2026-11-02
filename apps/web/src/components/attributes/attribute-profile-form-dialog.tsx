@@ -1,11 +1,11 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { ChevronDown, ChevronRight, GripVertical, ImageIcon, Layers, Plus, Save, Trash2, X } from "lucide-react";
+import { ArrowDownUp, ChevronDown, ChevronRight, GripVertical, ImageIcon, Layers, Plus, Save, Trash2, X } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Sheet, SheetContent } from "@/components/ui/sheet";
+import { Sheet, SheetContent, SheetTitle } from "@/components/ui/sheet";
 import { cn } from "@/lib/utils";
 import {
   createEmptyBulkGroup,
@@ -147,6 +147,8 @@ export function AttributeProfileFormDialog({
       groups: f.groups.map((g) => (g.key === key ? { ...g, ...patch } : g)),
     }));
 
+  const [showFilterOrder, setShowFilterOrder] = useState(false);
+
   const handleGroupDrop = (targetKey: string) => {
     if (!dragGroupKey || dragGroupKey === targetKey) return;
     setForm((f) => ({
@@ -172,6 +174,15 @@ export function AttributeProfileFormDialog({
               {mode === "edit" ? (form.profileName || profile?.name || "Edit Profile") : "Add Attribute Profile"}
             </p>
             <div className="flex items-center gap-2">
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={() => setShowFilterOrder((v) => !v)}
+                title="Order of the filters on the category page"
+              >
+                <ArrowDownUp className="mr-1.5 h-3.5 w-3.5" />
+                Filter order
+              </Button>
               <Button size="sm" onClick={handleSave}>
                 <Save className="mr-1.5 h-3.5 w-3.5" />
                 Save
@@ -293,8 +304,6 @@ export function AttributeProfileFormDialog({
                   </div>}
                 </div>
 
-                <FilterOrderPanel groups={form.groups} onChange={(groups) => setForm((f) => ({ ...f, groups }))} />
-
                 {/* Bottom save bar */}
                 <div className="flex justify-end gap-2 border-t border-input pt-3">
                   <Button type="button" variant="outline" size="sm" onClick={() => onOpenChange(false)}>
@@ -309,6 +318,41 @@ export function AttributeProfileFormDialog({
             </div>
         </div>
       </SheetContent>
+
+      {/* The filters' order has its own drawer on top of this one; changes go into this form and are saved with its Save. */}
+      <Sheet open={showFilterOrder} onOpenChange={setShowFilterOrder}>
+        <SheetContent
+          side="right"
+          className="w-full max-w-md gap-0 overflow-hidden p-0 sm:max-w-md [&>button.absolute]:hidden"
+          aria-describedby={undefined}
+        >
+          <div className="flex h-full min-h-0 flex-col">
+            <div className="flex shrink-0 items-center justify-between border-b border-input px-5 py-4">
+              <SheetTitle className="text-base font-semibold">
+                Filter order{form.profileName ? ` · ${form.profileName}` : ""}
+              </SheetTitle>
+              <div className="flex items-center gap-2">
+                <Button size="sm" onClick={() => setShowFilterOrder(false)}>Done</Button>
+                <button
+                  type="button"
+                  className="rounded-md p-1 hover:bg-accent"
+                  onClick={() => setShowFilterOrder(false)}
+                  aria-label="Close"
+                >
+                  <X className="h-4 w-4" />
+                </button>
+              </div>
+            </div>
+            <div className="min-h-0 flex-1 overflow-y-auto px-5 py-4">
+              <FilterOrderPanel groups={form.groups} onChange={(groups) => setForm((f) => ({ ...f, groups }))} />
+              {form.groups.reduce((n, g) => n + g.attributes.filter((a) => a.filterable && a.name.trim()).length, 0) < 2 && (
+                <p className="text-sm text-muted-foreground">Turn on Filter for at least two attributes to arrange their order.</p>
+              )}
+              <p className="mt-3 text-xs text-muted-foreground">Press Save on the profile to keep the new order.</p>
+            </div>
+          </div>
+        </SheetContent>
+      </Sheet>
     </Sheet>
   );
 }
