@@ -73,6 +73,7 @@ new_items = [
                 field_type="multi_select" if on_map.get((g["name"], a), {}).get("kind") == "multi_select" else None,
                 filterable=(g["name"], a) in on_map,
                 filter_display_type=on_map.get((g["name"], a), {}).get("kind", "single_select"),
+                filter_order=on_map.get((g["name"], a), {}).get("order"),
                 predefined_values=list(on_map.get((g["name"], a), {}).get("options", [])),
             )
             for a in g["attributes"]
@@ -88,7 +89,7 @@ old_items = [
             BulkAttributeItem(
                 id=a.id, name=a.name, field_type=a.field_type, filterable=bool(a.is_filterable),
                 filter_display_type=a.filter_display_type or "single_select", storefront_filter_visible=bool(a.storefront_filter_visible),
-                predefined_values=sp.parse_json_list(a.predefined_values),
+                filter_order=a.filter_order, predefined_values=sp.parse_json_list(a.predefined_values),
             )
             for a in old_attrs[g.id]
         ],

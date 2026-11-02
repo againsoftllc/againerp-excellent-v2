@@ -29,6 +29,7 @@ class AttributeFieldRead(BaseModel):
     is_active: bool
     filter_display_type: str = "multi_select"
     storefront_filter_visible: bool = True
+    filter_order: Optional[int] = None
     unit: Optional[str] = None
     help_text: Optional[str] = None
     predefined_values: List[str] = []
@@ -122,6 +123,7 @@ class BulkAttributeItem(BaseModel):
     filterable: bool = False
     filter_display_type: str = "single_select"
     storefront_filter_visible: bool = True
+    filter_order: Optional[int] = None  # position in the category page's filter list; None keeps the current one
     predefined_values: List[str] = []
 
     def normalized_display_type(self) -> str:

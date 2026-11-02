@@ -31,6 +31,8 @@ export type AttributeSpec = {
   /** Storefront filter widget: multi_select | range | boolean | color | dynamic */
   filterDisplayType?: FilterDisplayType;
   storefrontFilterVisible?: boolean;
+  /** Place in the category page's filter list (the source shop's order); undefined = follow the spec order */
+  filterOrder?: number;
   unit?: string;
   helpText?: string;
   predefinedValues?: string[];
@@ -211,6 +213,7 @@ export type BulkAttributeRow = {
   filterable: boolean;
   filterDisplayType: FilterDisplayType;
   storefrontFilterVisible: boolean;
+  filterOrder?: number;
   predefinedValues: string[];
 };
 
@@ -246,6 +249,7 @@ export function profileToBulkForm(
         filterable: attr.isFilterable,
         filterDisplayType: attr.filterDisplayType === "multi_select" || attr.filterDisplayType === "range" ? attr.filterDisplayType : "single_select",
         storefrontFilterVisible: attr.storefrontFilterVisible ?? true,
+        filterOrder: attr.filterOrder,
         predefinedValues: attr.predefinedValues ?? [],
       })),
     })),

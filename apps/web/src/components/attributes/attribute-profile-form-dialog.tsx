@@ -21,6 +21,7 @@ import {
   fetchAttributeProfileValueUsage,
   type LockedFilterValuesByAttrId,
 } from "@/lib/api/catalog-attribute-profiles";
+import { FilterOrderPanel } from "@/components/attributes/filter-order-panel";
 import {
   reorderGroupsByKey,
   SortableAttributeGrid,
@@ -110,6 +111,7 @@ export function AttributeProfileFormDialog({
             filterable: a.filterable,
             filterDisplayType: a.filterDisplayType,
             storefrontFilterVisible: a.storefrontFilterVisible,
+            filterOrder: a.filterOrder,
             predefinedValues: a.predefinedValues,
           })),
       }));
@@ -290,6 +292,8 @@ export function AttributeProfileFormDialog({
                     </div>
                   </div>}
                 </div>
+
+                <FilterOrderPanel groups={form.groups} onChange={(groups) => setForm((f) => ({ ...f, groups }))} />
 
                 {/* Bottom save bar */}
                 <div className="flex justify-end gap-2 border-t border-input pt-3">

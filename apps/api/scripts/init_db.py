@@ -3324,6 +3324,7 @@ def ensure_catalog_attribute_filter_columns() -> None:
     statements = [
         "ALTER TABLE catalog_attributes ADD COLUMN IF NOT EXISTS filter_display_type VARCHAR(30) NOT NULL DEFAULT 'multi_select'",
         "ALTER TABLE catalog_attributes ADD COLUMN IF NOT EXISTS storefront_filter_visible BOOLEAN NOT NULL DEFAULT TRUE",
+        "ALTER TABLE catalog_attributes ADD COLUMN IF NOT EXISTS filter_order INTEGER",
     ]
     with engine.begin() as conn:
         for stmt in statements:

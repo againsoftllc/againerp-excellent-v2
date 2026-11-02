@@ -737,14 +737,55 @@ def unmatched_filters(fields: list[dict], source_filters: list[dict]) -> list[di
     """The source shop's filters (>= 2 options) that NO attribute of the profile names - each becomes an attribute of the
     "Key Feature" group (multi-select, filterable, the shop's options as its predefined values)."""
     out: list[dict] = []
-    for f in source_filters or []:
+    for i, f in enumerate(source_filters or []):
         title, options = str(f.get("title") or "").strip(), [str(o) for o in f.get("options") or []]
         if len(options) < 2 or not title:
             continue
         if any(_filter_matches_label(title, fld["name"]) for fld in fields):
             continue
-        out.append({"title": title[:255], "options": options})
+        out.append({"title": title[:255], "options": options, "order": i})
     return out
+
+
+def apply_source_filter_order(
+    db: Session, profile: CatalogAttributeProfile, source_filters: list[dict], *, force: bool = False, reorder_options: bool = False
+) -> int:
+    """The category page lists a profile's filters in the SOURCE shop's own order: each filterable attribute that has no order yet
+    takes the place of the source filter that names it. Orders already set (by hand) stay unless `force`. `reorder_options` also lists each
+    filter's options in the source's order (options the source does not have follow, in their old order). Returns how many were set. Caller commits."""
+    set_n = 0
+    attrs = (
+        db.query(CatalogAttribute)
+        .join(CatalogAttributeGroup, CatalogAttributeGroup.id == CatalogAttribute.group_id)
+        .filter(CatalogAttributeGroup.profile_id == profile.id, CatalogAttribute.is_filterable.is_(True), CatalogAttribute.is_active.is_(True))
+        .all()
+    )
+    claimed: set[str] = set()
+    done: set[int] = set()
+    titles = [(i, clean_filter_title(f.get("title"))) for i, f in enumerate(source_filters or [])]
+    # same name first, then the attribute that shares words with the filter - never two filters on one attribute
+    for exact in (True, False):
+        for i, title in titles:
+            if not title or i in done:
+                continue
+            for a in attrs:
+                if a.id in claimed or (a.filter_order is not None and not force):
+                    continue
+                if slugify_code(a.name) == slugify_code(title) if exact else _filter_matches_label(title, a.name):
+                    a.filter_order = i
+                    claimed.add(a.id)
+                    done.add(i)
+                    set_n += 1
+                    if reorder_options:
+                        src = [str(o).strip() for o in (source_filters[i].get("options") or []) if str(o).strip()]
+                        have = parse_json_list(a.predefined_values)
+                        by_norm = {_norm(h): h for h in have}
+                        ordered = [by_norm[_norm(o)] for o in src if _norm(o) in by_norm]
+                        ordered += [h for h in have if h not in ordered]
+                        if ordered != have:
+                            a.predefined_values = json.dumps(ordered)
+                    break
+    return set_n
 
 
 _FILTER_MULTI_TITLE = re.compile(r"feature|additional|other|support|accessor|included|function", re.I)
@@ -881,7 +922,8 @@ def attach_source_filters(
         if len(options) < 2 or not title or slugify_code(title) in seen:
             continue
         seen.add(slugify_code(title))
-        items.append({"title": title, "options": options, "kind": infer_filter_display(title, options)})
+        # "order": the filter's place in the source shop's own list - the category page lists ours the same way
+        items.append({"title": title, "options": options, "kind": infer_filter_display(title, options), "order": len(items)})
     base = {**proposal, "filters": {}, "multi": [], "ranges": [], "filter_attrs": []}
     if not items:
         return base
@@ -966,7 +1008,7 @@ def extend_profile_with_filters(db: Session, profile: CatalogAttributeProfile, u
                 BulkAttributeItem(
                     id=a.id, name=a.name, field_type=a.field_type, filterable=bool(a.is_filterable),
                     filter_display_type=a.filter_display_type, storefront_filter_visible=bool(a.storefront_filter_visible),
-                    predefined_values=parse_json_list(a.predefined_values),
+                    filter_order=a.filter_order, predefined_values=parse_json_list(a.predefined_values),
                 )
                 for a in attrs
             ],
@@ -983,7 +1025,7 @@ def extend_profile_with_filters(db: Session, profile: CatalogAttributeProfile, u
         if slugify_code(f["title"]) in have:
             continue
         key_item.attributes.append(
-            BulkAttributeItem(name=f["title"], field_type="multi_select", filterable=True, predefined_values=list(f["options"]))
+            BulkAttributeItem(name=f["title"], field_type="multi_select", filterable=True, filter_order=f.get("order"), predefined_values=list(f["options"]))
         )
         have.add(slugify_code(f["title"]))
         added += 1
@@ -1063,6 +1105,7 @@ def create_profile(db: Session, *, company_id: str, proposal: dict, category_lab
                         field_type="multi_select" if on.get((g["name"], a), {}).get("kind") == "multi_select" else None,
                         filterable=(g["name"], a) in on,
                         filter_display_type=on.get((g["name"], a), {}).get("kind", "single_select"),
+                        filter_order=on.get((g["name"], a), {}).get("order"),
                         predefined_values=list(on.get((g["name"], a), {}).get("options", [])),
                     )
                     for a in g["attributes"]
@@ -1175,6 +1218,8 @@ def apply_from_source(
             return None
         fields = profile_fields(db, profile.id)
         key_added = 0
+        if source_filters and not created:
+            apply_source_filter_order(db, profile, source_filters)
         if extend_profile and not created and source_filters:
             # the source shop's filters no attribute of the profile names -> its "Key Feature" group (approved by the user)
             key_added = extend_profile_with_filters(db, profile, unmatched_filters(fields, source_filters))

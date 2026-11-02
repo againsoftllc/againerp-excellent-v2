@@ -20,6 +20,7 @@ import {
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { FilterOrderPanel } from "@/components/attributes/filter-order-panel";
 import {
   reorderGroupsByKey,
   SortableAttributeGrid,
@@ -113,6 +114,7 @@ export function AttributeProfileEditForm({ profileId }: Props) {
             filterable: a.filterable,
             filterDisplayType: a.filterDisplayType,
             storefrontFilterVisible: a.storefrontFilterVisible,
+            filterOrder: a.filterOrder,
             predefinedValues: a.predefinedValues,
           })),
       }));
@@ -300,6 +302,8 @@ export function AttributeProfileEditForm({ profileId }: Props) {
           </div>
         )}
       </div>
+
+      <FilterOrderPanel groups={form.groups} onChange={(groups) => setForm((f) => ({ ...f, groups }))} />
     </div>
   );
 }

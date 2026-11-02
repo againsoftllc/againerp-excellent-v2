@@ -19,6 +19,7 @@ import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Sheet, SheetContent, SheetTitle } from "@/components/ui/sheet";
+import { FilterOrderPanel } from "@/components/attributes/filter-order-panel";
 import {
   reorderGroupsByKey,
   SortableAttributeGrid,
@@ -93,6 +94,7 @@ export function AttributeProfileEditDialog({ profileId, open, onClose, onSaved }
             filterable: a.filterable,
             filterDisplayType: a.filterDisplayType,
             storefrontFilterVisible: a.storefrontFilterVisible,
+            filterOrder: a.filterOrder,
             predefinedValues: a.predefinedValues,
           })),
       }));
@@ -230,6 +232,8 @@ export function AttributeProfileEditDialog({ profileId, open, onClose, onSaved }
                   </div>
                 )}
               </div>
+
+              <FilterOrderPanel groups={form.groups} onChange={(groups) => setForm((f) => ({ ...f, groups }))} />
             </>
           )}
         </div>

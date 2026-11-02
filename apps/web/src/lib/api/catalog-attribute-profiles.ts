@@ -21,6 +21,7 @@ export type ApiAttributeField = {
   is_active: boolean;
   filter_display_type?: string;
   storefront_filter_visible?: boolean;
+  filter_order?: number | null;
   unit: string | null;
   help_text: string | null;
   predefined_values: string[];
@@ -114,6 +115,7 @@ export function apiAttributeToSpec(row: ApiAttributeField): AttributeSpec {
     active: row.is_active,
     filterDisplayType: row.filter_display_type === "multi_select" ? "multi_select" : row.filter_display_type === "range" ? "range" : "single_select",
     storefrontFilterVisible: row.storefront_filter_visible ?? true,
+    filterOrder: row.filter_order ?? undefined,
     unit: row.unit ?? undefined,
     helpText: row.help_text ?? undefined,
     predefinedValues: row.predefined_values ?? [],
@@ -129,6 +131,7 @@ export type BulkSaveGroupInput = {
     filterable?: boolean;
     filterDisplayType?: string;
     storefrontFilterVisible?: boolean;
+    filterOrder?: number;
     predefinedValues?: string[];
   }[];
 };
@@ -153,6 +156,7 @@ export function bulkSaveToApiPayload(input: BulkSaveProfileInput) {
         filterable: a.filterable ?? false,
         filter_display_type: a.filterDisplayType === "multi_select" || a.filterDisplayType === "range" ? a.filterDisplayType : "single_select",
         storefront_filter_visible: a.storefrontFilterVisible ?? true,
+        filter_order: a.filterOrder ?? null,
         predefined_values: a.predefinedValues ?? [],
       })),
     })),

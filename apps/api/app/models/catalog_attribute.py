@@ -39,6 +39,8 @@ class CatalogAttribute(Base):
     # How this filter renders on the storefront when is_filterable.
     filter_display_type: Mapped[str] = mapped_column(String(30), nullable=False, default="single_select")
     storefront_filter_visible: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    # Where this filter sits in the category page's filter list. None = follow the spec order / the Filters page.
+    filter_order: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
     unit: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
     help_text: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     predefined_values: Mapped[str] = mapped_column(Text, nullable=False, default="[]")

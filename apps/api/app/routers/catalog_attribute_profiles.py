@@ -73,6 +73,7 @@ def _field_to_read(row: CatalogAttribute) -> AttributeFieldRead:
             "range" if row.field_type == "range" else "multi_select" if row.field_type == "multi_select" else "single_select"
         ),
         storefront_filter_visible=bool(getattr(row, "storefront_filter_visible", True)),
+        filter_order=getattr(row, "filter_order", None),
         unit=row.unit,
         help_text=row.help_text,
         predefined_values=parse_json_list(row.predefined_values),
@@ -538,6 +539,8 @@ def _replace_profile_structure(
                 "range" if attr.field_type == "range" else "multi_select" if attr.field_type == "multi_select" else "single_select"
             )
             attr.storefront_filter_visible = bool(attr_item.storefront_filter_visible)
+            if attr_item.filter_order is not None:
+                attr.filter_order = attr_item.filter_order
             attr.predefined_values = json.dumps(attr_item.predefined_values or [])
             db.flush()
             kept_attr_ids.add(attr.id)

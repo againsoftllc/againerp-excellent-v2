@@ -741,12 +741,13 @@ class StorefrontCatalogService:
                 (bool(getattr(a, "storefront_filter_visible", True)), a.sort_order or 0),
             )[0]
         ]
+        # The category page lists filters in the attribute's own filter order (the source shop's order) when it has one,
+        # else by the Filters page / spec order - the spec table and the filter list are ordered independently.
         attrs.sort(
             key=lambda a: (
-                filter_cfg.get(
-                    a.id,
-                    (True, 10_000 + (a.sort_order or 0)),
-                )[1],
+                (0, a.filter_order)
+                if getattr(a, "filter_order", None) is not None
+                else (1, filter_cfg.get(a.id, (True, 10_000 + (a.sort_order or 0)))[1]),
                 a.name,
             ),
         )
