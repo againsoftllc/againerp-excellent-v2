@@ -430,6 +430,12 @@ class StorefrontPickupPointRead(BaseModel):
     address: str = ""
     phone: str = ""
     map_url: str = ""
+    image: str = ""
+    hours: str = ""
+    whatsapp: str = ""
+    email: str = ""
+    # "false" = collection counter only: not listed on the Branches page / footer
+    visible: str = "true"
 
 
 class StorefrontCheckoutOptionsRead(BaseModel):

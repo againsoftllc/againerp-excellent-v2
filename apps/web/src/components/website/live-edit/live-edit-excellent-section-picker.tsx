@@ -13,7 +13,7 @@ import {
 } from "@/components/again/again-drawer";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
-import { sectionLabel, type ExcellentLayoutBlock } from "@/lib/website/excellent-home";
+import { sectionLabel } from "@/lib/website/excellent-home";
 
 const CHROME_SECTIONS: { id: string; label: string }[] = [
   { id: "header-top", label: "Header top" },
@@ -37,16 +37,20 @@ function SectionGroup({ title, count, expanded, onToggle, children }: { title: s
 }
 
 type Props = {
-  layout: ExcellentLayoutBlock[];
+  layout: { id: string; hidden: boolean }[];
   selectedSection: string | null;
   pageLocked?: boolean;
   onSelect: (sectionId: string) => void;
   open: boolean;
   onOpenChange: (open: boolean) => void;
+  /** Title of the page's own group (default: the home sections) and whether the home-only hero cards are offered. */
+  groupTitle?: string;
+  hideHeroCards?: boolean;
 };
 
 /** Toolbar "Section" control: opens a drawer listing the site blocks and homepage sections; pick one to edit. */
-export function LiveEditExcellentSectionPicker({ layout, selectedSection, pageLocked = false, onSelect, open, onOpenChange }: Props) {
+export function LiveEditExcellentSectionPicker({ layout, selectedSection, pageLocked = false, onSelect, open, onOpenChange, groupTitle = "Home sections", hideHeroCards = false }: Props) {
+  const common = hideHeroCards ? CHROME_SECTIONS.filter((s) => s.id !== "hero-cards") : CHROME_SECTIONS;
   const titleId = useId();
   const [chromeExpanded, setChromeExpanded] = useState(true);
   const [homeExpanded, setHomeExpanded] = useState(true);
@@ -100,15 +104,15 @@ export function LiveEditExcellentSectionPicker({ layout, selectedSection, pageLo
 
           <AgainDrawerScrollBody className={AGAIN_DRAWER_FIELD_SHEET_CLASS}>
             <div className="space-y-3">
-              <SectionGroup title="Common" count={CHROME_SECTIONS.length} expanded={chromeExpanded} onToggle={() => setChromeExpanded((v) => !v)}>
-                {CHROME_SECTIONS.map((item, index) => (
+              <SectionGroup title="Common" count={common.length} expanded={chromeExpanded} onToggle={() => setChromeExpanded((v) => !v)}>
+                {common.map((item, index) => (
                   <button key={item.id} type="button" onClick={() => pick(item.id)} className={rowClass(selectedSection === item.id, false, index === 0)}>
                     {item.label}
                   </button>
                 ))}
               </SectionGroup>
 
-              <SectionGroup title="Home sections" count={layout.length} expanded={homeExpanded} onToggle={() => setHomeExpanded((v) => !v)}>
+              <SectionGroup title={groupTitle} count={layout.length} expanded={homeExpanded} onToggle={() => setHomeExpanded((v) => !v)}>
                 {layout.map((block, index) => (
                   <button key={block.id} type="button" onClick={() => pick(block.id)} className={rowClass(selectedSection === block.id, block.hidden, index === 0)}>
                     <span className="min-w-0 truncate">{sectionLabel(block.id)}</span>

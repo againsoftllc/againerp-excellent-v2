@@ -20,7 +20,9 @@ import { fetchWebsiteHomepage } from "@/lib/api/website-homepage";
 import { useAdminAuth } from "@/lib/store/admin-auth-store";
 import {
   applyExcellentLayoutAction,
+  BRANCH_SECTIONS,
   excellentLayoutOf,
+  isBranchSection,
   isExcellentSection,
   mergeHomepagePayload,
   sectionLabel,
@@ -66,7 +68,7 @@ const DEVICES: { id: DeviceId; label: string; icon: typeof Monitor; width: numbe
  * Either way it applies every click / toolbar action the page sends, pushes the
  * unsaved draft back as a live preview and saves the homepage row.
  */
-export function ExcellentLiveEditEmbedPanel({ shell = false }: { shell?: boolean }) {
+export function ExcellentLiveEditEmbedPanel({ shell = false, page = "home" }: { shell?: boolean; /** Which storefront page is edited: the home page (default) or the Branches page. */ page?: "home" | "branches" }) {
   const router = useRouter();
   const setSession = useAdminAuth((s) => s.setSession);
   const authToken = useAdminAuth((s) => s.token);
@@ -206,7 +208,7 @@ export function ExcellentLiveEditEmbedPanel({ shell = false }: { shell?: boolean
 
   const openEditor = useCallback(
     (id: string) => {
-      if (!CHROME_IDS.has(id) && !isExcellentSection(id)) return;
+      if (!CHROME_IDS.has(id) && !isExcellentSection(id) && !isBranchSection(id)) return;
       setSelected(id);
       highlight(id);
       setDrawerOpen(true);
@@ -343,11 +345,12 @@ export function ExcellentLiveEditEmbedPanel({ shell = false }: { shell?: boolean
   const layout = excellentLayoutOf(draft);
   const hiddenSections = layout.filter((b) => b.hidden);
   const open = !locked && drawerOpen;
-  const excellentSection = selected && ((isExcellentSection(selected) && !TYPED_IDS.has(selected)) || selected === "hero-cards") ? selected : null;
+  const excellentSection = selected && ((isExcellentSection(selected) && !TYPED_IDS.has(selected)) || selected === "hero-cards" || isBranchSection(selected)) ? selected : null;
   const frameWidth = DEVICES.find((d) => d.id === device)?.width ?? 1320;
   // This admin's own storefront (env) first: the saved site URLs can still point at another local stack.
   const storefrontBase = (process.env.NEXT_PUBLIC_STOREFRONT_URL?.trim() || getStorefrontBaseUrl()).replace(/\/$/, "");
-  const frameSrc = `${storefrontBase}/?liveEdit=1`;
+  const frameSrc = page === "branches" ? `${storefrontBase}/branches?liveEdit=1` : `${storefrontBase}/?liveEdit=1`;
+  const pageLayout = page === "branches" ? BRANCH_SECTIONS.map((s) => ({ id: s.id, hidden: false })) : layout;
 
   const sectionButtons = (
     <>
@@ -357,16 +360,18 @@ export function ExcellentLiveEditEmbedPanel({ shell = false }: { shell?: boolean
           {label}
         </Button>
       ))}
-      <p className="mb-1 mt-2 px-1 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">Homepage sections</p>
-      {layout.map((b) => (
+      <p className="mb-1 mt-2 px-1 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">{page === "branches" ? "Branches page sections" : "Homepage sections"}</p>
+      {pageLayout.map((b) => (
         <div key={b.id} className="flex items-center gap-1">
           <Button type="button" variant="ghost" className={cn("h-9 flex-1 justify-start", selected === b.id && "bg-muted", b.hidden && "opacity-50")} disabled={locked} onClick={() => openEditor(b.id)}>
             {sectionLabel(b.id)}
             {b.hidden ? " · hidden" : ""}
           </Button>
-          <Button type="button" variant="ghost" size="icon" className="h-9 w-9" title={b.hidden ? "Show" : "Hide"} onClick={() => layoutAction("toggleHidden", b.id)}>
-            {b.hidden ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
-          </Button>
+          {page !== "branches" && (
+            <Button type="button" variant="ghost" size="icon" className="h-9 w-9" title={b.hidden ? "Show" : "Hide"} onClick={() => layoutAction("toggleHidden", b.id)}>
+              {b.hidden ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+            </Button>
+          )}
         </div>
       ))}
     </>
@@ -391,7 +396,7 @@ export function ExcellentLiveEditEmbedPanel({ shell = false }: { shell?: boolean
             {locked ? <Lock className="h-4 w-4" /> : <Unlock className="h-4 w-4" />}
           </Button>
           {shell && (
-            <LiveEditExcellentSectionPicker layout={layout} selectedSection={selected} pageLocked={locked} onSelect={openEditor} open={sectionsOpen} onOpenChange={setSectionsOpen} />
+            <LiveEditExcellentSectionPicker layout={pageLayout} groupTitle={page === "branches" ? "Branches page" : undefined} hideHeroCards={page === "branches"} selectedSection={selected} pageLocked={locked} onSelect={openEditor} open={sectionsOpen} onOpenChange={setSectionsOpen} />
           )}
         </div>
 

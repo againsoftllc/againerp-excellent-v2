@@ -177,6 +177,103 @@ export function LiveEditExcellentDrawer({ onBack, open, onOpenChange, section, c
           </div>
         );
       }
+      case "branches-intro": {
+        const b = obj(ex.branches_intro);
+        return (
+          <div className="space-y-3 rounded-md border border-border bg-card p-2.5">
+            <Field label="Heading" value={b.title} onChange={(v) => setEx({ branches_intro: { ...b, title: v } })} placeholder="Our Branches" />
+            <Field label="Text" multiline value={b.text} onChange={(v) => setEx({ branches_intro: { ...b, text: v } })} />
+          </div>
+        );
+      }
+      case "branches-hotline": {
+        const p = obj(ex.branches_page);
+        const h = obj(p.hotline);
+        return (
+          <div className="space-y-3 rounded-md border border-border bg-card p-2.5">
+            <AgainFormRow label="Hide this band">
+              <div className="flex h-8 items-center">
+                <Switch checked={Boolean(h.hidden)} onCheckedChange={(v) => setEx({ branches_page: { ...p, hotline: { ...h, hidden: v } } })} />
+              </div>
+            </AgainFormRow>
+            <p className="text-[11px] text-muted-foreground">The sales hotline, support number and email come from Settings.</p>
+          </div>
+        );
+      }
+      case "branches-list": {
+        const p = obj(ex.branches_page);
+        const l = obj(p.list);
+        const set = (patch: Json) => setEx({ branches_page: { ...p, list: { ...l, ...patch } } });
+        return (
+          <div className="space-y-3 rounded-md border border-border bg-card p-2.5">
+            <Field label="Heading" value={l.title} onChange={(v) => set({ title: v })} placeholder="Our Branches" />
+            <Field label="Sub heading" value={l.subtitle} onChange={(v) => set({ subtitle: v })} placeholder="Empty = Open + the shop hours" />
+            <AgainFormRow label="Show maps">
+              <div className="flex h-8 items-center">
+                <Switch checked={l.maps !== false} onCheckedChange={(v) => set({ maps: v })} />
+              </div>
+            </AgainFormRow>
+            <AgainFormRow label="Hide this section">
+              <div className="flex h-8 items-center">
+                <Switch checked={Boolean(l.hidden)} onCheckedChange={(v) => set({ hidden: v })} />
+              </div>
+            </AgainFormRow>
+            <p className="text-[11px] text-muted-foreground">
+              The branches themselves (name, address, phone, hours, photo) are managed in <a className="underline" href="/website/branches" target="_blank" rel="noreferrer">Website → Branches</a>.
+            </p>
+          </div>
+        );
+      }
+      case "branches-hours": {
+        const p = obj(ex.branches_page);
+        const h = obj(p.hours);
+        const corp = obj(ex.corporate);
+        return (
+          <div className="space-y-4">
+            <div className="space-y-3 rounded-md border border-border bg-card p-2.5">
+              <AgainFormRow label="Hide this card">
+                <div className="flex h-8 items-center">
+                  <Switch checked={Boolean(h.hidden)} onCheckedChange={(v) => setEx({ branches_page: { ...p, hours: { ...h, hidden: v } } })} />
+                </div>
+              </AgainFormRow>
+              <p className="text-[11px] text-muted-foreground">The first line is the shop&apos;s business hours from Settings. Add more lines below.</p>
+            </div>
+            <RowList
+              noun="Hours line"
+              rows={list(ex.extra_hours)}
+              blank={{ label: "", value: "" }}
+              fields={[
+                { key: "label", label: "Label (e.g. Online orders)" },
+                { key: "value", label: "Hours (e.g. 24/7)" },
+              ]}
+              onChange={(rows) => setEx({ extra_hours: rows })}
+            />
+            <div className="space-y-3 rounded-md border border-border bg-card p-2.5">
+              <p className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">Corporate box</p>
+              <Field label="Title" value={corp.title} onChange={(v) => setEx({ corporate: { ...corp, title: v } })} />
+              <Field label="Text" multiline value={corp.text} onChange={(v) => setEx({ corporate: { ...corp, text: v } })} />
+              <Field label="Button" value={corp.button} onChange={(v) => setEx({ corporate: { ...corp, button: v } })} />
+            </div>
+          </div>
+        );
+      }
+      case "branches-form": {
+        const p = obj(ex.branches_page);
+        const f = obj(p.form);
+        const set = (patch: Json) => setEx({ branches_page: { ...p, form: { ...f, ...patch } } });
+        return (
+          <div className="space-y-3 rounded-md border border-border bg-card p-2.5">
+            <Field label="Heading" value={f.title} onChange={(v) => set({ title: v })} placeholder="Send Us a Message" />
+            <Field label="Text" multiline value={f.text} onChange={(v) => set({ text: v })} placeholder="We usually reply within a few hours during business days." />
+            <AgainFormRow label="Hide the form">
+              <div className="flex h-8 items-center">
+                <Switch checked={Boolean(f.hidden)} onCheckedChange={(v) => set({ hidden: v })} />
+              </div>
+            </AgainFormRow>
+            <p className="text-[11px] text-muted-foreground">Messages arrive in the contact inbox.</p>
+          </div>
+        );
+      }
       case "hero-cards":
         return (
           <LiveEditExcellentKindCards

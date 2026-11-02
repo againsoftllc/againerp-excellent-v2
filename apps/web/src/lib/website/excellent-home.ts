@@ -20,6 +20,19 @@ export const EXCELLENT_SECTIONS = [
   { id: "seo", label: "SEO text" },
 ] as const;
 
+/** The storefront's Branches page: its sections are fixed (no move / hide toolbar) and edited in Live Edit. */
+export const BRANCH_SECTIONS = [
+  { id: "branches-intro", label: "Page heading" },
+  { id: "branches-hotline", label: "Hotline band" },
+  { id: "branches-list", label: "Branch cards" },
+  { id: "branches-hours", label: "Business hours" },
+  { id: "branches-form", label: "Contact form" },
+] as const;
+
+export function isBranchSection(id: string): boolean {
+  return BRANCH_SECTIONS.some((s) => s.id === id);
+}
+
 export type ExcellentSectionId = (typeof EXCELLENT_SECTIONS)[number]["id"];
 export type ExcellentLayoutBlock = { id: ExcellentSectionId; hidden: boolean };
 export type Json = Record<string, unknown>;
@@ -35,6 +48,8 @@ export function isExcellentSection(id: string): id is ExcellentSectionId {
 
 export function sectionLabel(id: string): string {
   if (id === "hero-cards") return "Hero side cards";
+  const branch = BRANCH_SECTIONS.find((s) => s.id === id);
+  if (branch) return branch.label;
   return EXCELLENT_SECTIONS.find((s) => s.id === id)?.label ?? id;
 }
 

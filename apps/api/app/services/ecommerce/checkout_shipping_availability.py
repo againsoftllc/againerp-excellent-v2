@@ -170,6 +170,12 @@ def parse_pickup_points(raw: Optional[str]) -> List[Dict[str, str]]:
                 "address": str(entry.get("address") or "").strip(),
                 "phone": str(entry.get("phone") or "").strip(),
                 "map_url": str(entry.get("map_url") or "").strip(),
+                # shown on the storefront's Branches page (Website → Branches); all optional
+                "image": str(entry.get("image") or "").strip(),
+                "hours": str(entry.get("hours") or "").strip(),
+                "whatsapp": str(entry.get("whatsapp") or "").strip(),
+                "email": str(entry.get("email") or "").strip(),
+                "visible": "false" if str(entry.get("visible", "true")).strip().lower() in ("false", "0", "no") else "true",
             }
         )
     return out or [dict(p) for p in DEFAULT_PICKUP_POINTS]
