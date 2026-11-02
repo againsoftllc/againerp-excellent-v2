@@ -246,6 +246,9 @@ def _sync_specials_for_campaign(db: Session, campaign: MarketingHappyHour) -> No
             product = product_by_slug.get(deal.product_slug)
             if not product:
                 continue
+            # An offer that is not below the product's own price lowers nothing: no special price (it would raise the price).
+            if not (0 < float(deal.offer_price) < float(product.price)):
+                continue
             seen_product_ids.add(product.id)
             row = existing_by_product_id.get(product.id)
             if row is None:

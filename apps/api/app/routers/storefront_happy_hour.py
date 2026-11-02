@@ -159,32 +159,25 @@ def _detail(db: Session, row: MarketingHappyHour) -> StorefrontHappyHourDetail:
                 view = catalog.get_by_slug(slug)
                 if not view:
                     continue
-                # The "regular" reference must be the product's raw list price,
-                # never the already-resolved `view.price` — otherwise once this
-                # very deal is the active special, offer == view.price and the
-                # product wrongly looks like a non-discount and gets dropped.
+                # Every deal is listed. The "regular" price is what the product normally sells for
+                # (the raw price, never the already-resolved `view.price`, which carries this deal once it is
+                # the active special). Open: the offer price when it is below the regular one, else the
+                # regular price (an offer that is not lower never raises the price). Not open yet: regular.
                 raw = raw_by_slug.get(slug)
-                if raw is not None:
-                    regular = float(raw.compare_at_price) if raw.compare_at_price else float(raw.price)
-                else:
-                    regular = (
-                        float(view.compare_at_price) if view.compare_at_price is not None else float(view.price)
-                    )
+                regular = float(raw.price) if raw is not None else float(view.compare_at_price if view.compare_at_price is not None else view.price)
+                list_price = float(raw.compare_at_price) if raw is not None and raw.compare_at_price else (float(view.compare_at_price) if view.compare_at_price is not None else None)
                 offer = float(deal.offer_price)
-                if offer <= 0 or offer >= regular:
-                    continue
-                if not live_now:
-                    # not open yet: the product's own price, no deal price and no strike-through
-                    price_now = float(raw.price) if raw is not None else float(view.price)
-                    offer, regular = price_now, None
+                shown = offer if live_now and 0 < offer < regular else regular
+                # the struck-through price: the product's list price when higher, else the regular price once a deal lowers it
+                strike = list_price if list_price is not None and list_price > shown else (regular if shown < regular else None)
                 products.append(
                     StorefrontHappyHourDealProduct(
                         id=view.id,
                         item_id=view.item_id,
                         slug=view.slug,
                         name=view.name,
-                        price=offer,
-                        compare_at_price=regular,
+                        price=shown,
+                        compare_at_price=strike,
                         thumbnail=view.thumbnail,
                         brand=view.brand or None,
                         in_stock=bool(view.in_stock),

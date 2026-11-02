@@ -394,7 +394,14 @@ export function MarketingHappyHourPanel() {
             </option>
           ))}
         </Select>
-        <ApiRefreshButton onClick={() => void refetch()} health={apiHealth} />
+        <ApiRefreshButton
+          status={apiHealth.status}
+          loading={loading}
+          onRefresh={() => {
+            void refetch();
+            apiHealth.recheck();
+          }}
+        />
         {canWrite ? (
           <Button size="sm" className="ml-auto h-8 rounded-none" onClick={openCreate}>
             <Plus className="mr-1 h-3.5 w-3.5" />
