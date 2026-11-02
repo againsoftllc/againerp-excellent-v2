@@ -462,12 +462,15 @@ function HappyHourFormSheet({
   onSaved: () => Promise<void>;
 }) {
   const { categories, loading: categoriesLoading } = useCatalogCategories({ channel: "catalog" });
-  const { products, loading: productsLoading } = useCatalogProducts({ channel: "catalog" });
+  const { products: allProducts, loading: productsLoading } = useCatalogProducts({ channel: "catalog" });
+  // A draft (or archived) product is never shown on the shop, so it cannot be picked for a campaign. The full list is kept to
+  // look up the products already in a deal (name, picture, price) and to flag the ones that are not published.
+  const products = useMemo(() => allProducts.filter((p) => p.status === "published"), [allProducts]);
   const productsBySlug = useMemo(() => {
     const map = new Map<string, Product>();
-    for (const p of products) map.set(p.slug, p);
+    for (const p of allProducts) map.set(p.slug, p);
     return map;
-  }, [products]);
+  }, [allProducts]);
 
   const [title, setTitle] = useState("");
   const [slug, setSlug] = useState("happy-hour");
@@ -1189,6 +1192,11 @@ function DealsTable({
                     {deal.product_name || deal.product_slug}
                   </p>
                   <p className="truncate text-[10px] text-muted-foreground">{deal.product_slug}</p>
+                  {product && product.status !== "published" ? (
+                    <p className="text-[10px] font-medium text-destructive">
+                      {product.status === "draft" ? "Draft" : `Not published (${product.status})`} - not shown on the site until it is published
+                    </p>
+                  ) : null}
                   <Input
                     className="mt-1 h-6 rounded-none text-[10px]"
                     placeholder="Note (optional)"
