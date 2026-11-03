@@ -39,6 +39,8 @@ _SHIPPING_KEYS: tuple[tuple[str, str, str], ...] = (
     ("shipping.rate_same_day", "Same day rate", "Flat rate for same-day delivery"),
     ("shipping.zones", "Delivery zones", "Comma-separated districts served"),
     ("shipping.district_rates", "District rates", "JSON map of district to delivery charge"),
+    ("shipping.product_charges", "Product delivery charges", "JSON list of attribute value to extra delivery charge per unit"),
+    ("shipping.product_charges_exempt", "Product charge exempt districts", "Comma-separated districts where product delivery charges are not added"),
 )
 
 _TAX_KEYS: tuple[tuple[str, str, str], ...] = (
@@ -360,6 +362,72 @@ def list_settings(
             configured=bool(value),
         ))
     return result
+
+
+class ProductChargeValueOut(BaseModel):
+    value: str
+    count: int
+
+
+class ProductChargeAttributeOut(BaseModel):
+    code: str
+    name: str
+    values: list[ProductChargeValueOut]
+
+
+# Most distinct values an attribute may have to be offered as a delivery-charge table (screen size,
+# capacity… yes; free-text model names no).
+_PRODUCT_CHARGE_MAX_VALUES = 40
+
+
+@router.get("/shipping/product-charge-options", response_model=list[ProductChargeAttributeOut])
+def shipping_product_charge_options(
+    db: Session = Depends(get_db),
+    _: object = Depends(get_current_user),
+) -> list[ProductChargeAttributeOut]:
+    """Filterable attributes and the values their published products carry, for the delivery-charge table."""
+    import re
+
+    from sqlalchemy import func
+
+    from app.models.catalog_attribute import CatalogAttribute
+    from app.models.catalog_product import CatalogProduct
+    from app.models.catalog_product_attribute_value import CatalogProductAttributeValue as Val
+
+    rows = (
+        db.query(CatalogAttribute.code, CatalogAttribute.name, Val.value, func.count(func.distinct(Val.product_id)))
+        .join(Val, Val.attribute_id == CatalogAttribute.id)
+        .join(CatalogProduct, CatalogProduct.id == Val.product_id)
+        .filter(
+            CatalogAttribute.is_filterable.is_(True),
+            CatalogAttribute.is_active.is_(True),
+            CatalogProduct.status == "published",
+            Val.value != "",
+        )
+        .group_by(CatalogAttribute.code, CatalogAttribute.name, Val.value)
+        .all()
+    )
+    by_attr: dict[str, tuple[str, list[tuple[str, int]]]] = {}
+    for code, name, value, count in rows:
+        by_attr.setdefault(code, (name, []))[1].append((value.strip(), int(count)))
+
+    def natural(text: str) -> list:
+        return [int(t) if t.isdigit() else t.lower() for t in re.split(r"(d+)", text)]
+
+    out: list[ProductChargeAttributeOut] = []
+    for code, (name, values) in by_attr.items():
+        if len(values) > _PRODUCT_CHARGE_MAX_VALUES:
+            continue
+        values.sort(key=lambda v: natural(v[0]))
+        out.append(
+            ProductChargeAttributeOut(
+                code=code,
+                name=name,
+                values=[ProductChargeValueOut(value=v, count=c) for v, c in values],
+            )
+        )
+    out.sort(key=lambda a: a.name.lower())
+    return out
 
 
 @router.get("/{key}", response_model=SettingOut)

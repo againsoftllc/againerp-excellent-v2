@@ -586,6 +586,21 @@ export const BUSINESS_SETTINGS_CATEGORIES: SettingCategoryDef[] = [
                 defaultValue: "Dhaka,Chattogram,Khulna,Rajshahi,Sylhet,Barishal,Rangpur,Mymensingh",
               },
               {
+                key: "shipping.product_charges",
+                label: "Product Delivery Charges (JSON)",
+                description: 'Auto-managed by the product delivery charge table. Format: [{"attribute":"screen_size","charges":{"26-30 inch":300}}]',
+                type: "textarea",
+                defaultValue: "[]",
+              },
+              {
+                key: "shipping.product_charges_exempt",
+                label: "No Product Charge In",
+                description:
+                  "Comma-separated districts where product delivery charges are NOT added, so only the district price applies (e.g. Dhaka).",
+                type: "text",
+                defaultValue: "Dhaka",
+              },
+              {
                 key: "shipping.district_rates",
                 label: "District Rates (JSON)",
                 description: 'Auto-managed by the district price grid. Format: {"Dhaka":60,"Chattogram":120}',

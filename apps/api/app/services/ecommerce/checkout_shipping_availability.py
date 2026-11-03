@@ -6,6 +6,9 @@ Rules:
 - Express / Same Day use flat rates from settings.
 - Pickup is always free when enabled.
 - Free shipping only when `shipping.free_threshold` > 0 and subtotal meets it.
+- Product delivery charges (`shipping.product_charges`): an extra charge per unit for products whose
+  attribute value (e.g. Screen Size "26-30 inch") has a price, added to Home Delivery outside the
+  districts listed in `shipping.product_charges_exempt` (Dhaka by default).
 """
 
 from __future__ import annotations
@@ -65,6 +68,10 @@ SHIPPING_SETTING_DEFAULTS: Dict[str, str] = {
     "shipping.rate_same_day": "200",
     "shipping.zones": ",".join(DEFAULT_ZONES),
     "shipping.district_rates": json.dumps(DEFAULT_DISTRICT_RATES, ensure_ascii=False),
+    # [{"attribute": "screen_size", "charges": {"26-30 inch": 300}}] — empty = no product charges.
+    "shipping.product_charges": "[]",
+    # Districts where product delivery charges are not added (the district rate alone applies).
+    "shipping.product_charges_exempt": "Dhaka",
     "shipping.pickup_points": json.dumps(DEFAULT_PICKUP_POINTS, ensure_ascii=False),
     # Only the districts an admin has edited; the rest fall back to the built-in
     # list, so this stays small instead of copying all 64 districts.
@@ -453,6 +460,107 @@ def shipping_options_payload(db: Session) -> dict[str, Any]:
             _sub_district_overrides(s.get("shipping.sub_districts")),
         ),
     }
+
+
+def parse_product_charge_rules(raw: Optional[str]) -> List[Dict[str, Any]]:
+    """Parse `shipping.product_charges` into [{"attribute": code, "charges": {value: Decimal}}].
+
+    Bad JSON, unknown shapes and negative or non-numeric amounts are dropped rather than raised:
+    a typo in the admin setting must never stop checkout.
+    """
+    text = (raw or "").strip()
+    if not text:
+        return []
+    try:
+        data = json.loads(text)
+    except (json.JSONDecodeError, TypeError, ValueError):
+        return []
+    if not isinstance(data, list):
+        return []
+    rules: List[Dict[str, Any]] = []
+    for item in data:
+        if not isinstance(item, dict):
+            continue
+        code = str(item.get("attribute") or "").strip()
+        charges_raw = item.get("charges")
+        if not code or not isinstance(charges_raw, dict):
+            continue
+        charges: Dict[str, Decimal] = {}
+        for value, amount in charges_raw.items():
+            key = str(value).strip()
+            if not key:
+                continue
+            amt = _decimal(str(amount), Decimal("0"))
+            if amt > 0:
+                charges[key] = amt
+        if charges:
+            rules.append({"attribute": code, "charges": charges})
+    return rules
+
+
+def product_charge_for_values(rules: List[Dict[str, Any]], values: Dict[str, str]) -> Decimal:
+    """Extra delivery charge for ONE unit of a product, given its { attribute_code: value }.
+
+    Values are matched case-insensitively on the trimmed text; if several rules match, they add up.
+    """
+    total = Decimal("0")
+    for rule in rules:
+        value = str(values.get(rule["attribute"], "")).strip().lower()
+        if not value:
+            continue
+        for label, amount in rule["charges"].items():
+            if label.strip().lower() == value:
+                total += amount
+                break
+    return total
+
+
+def product_delivery_extra(
+    db: Session,
+    method_id: str,
+    lines: List[tuple[str, int]],
+    *,
+    district: str = "",
+) -> Decimal:
+    """Extra delivery charge for the cart: sum of (per-unit product charge × quantity).
+
+    `lines` is [(catalog_product_id, quantity)]. Nothing is added for pickup / free methods or when the
+    district is exempt (Dhaka by default).
+    """
+    if not lines:
+        return Decimal("0")
+    s = load_shipping_settings(db)
+    rules = parse_product_charge_rules(s.get("shipping.product_charges"))
+    if not rules:
+        return Decimal("0")
+    method = {m["id"]: m for m in list_available_shipping_options(db)}.get(method_id)
+    if not method or method["id"] == "pickup" or (method.get("pricing") or "flat") == "free":
+        return Decimal("0")
+    exempt = {d.strip().lower() for d in _split_list(s.get("shipping.product_charges_exempt"), [])}
+    if (district or "").strip().lower() in exempt:
+        return Decimal("0")
+    # No district picked yet: the customer is assumed to be in Dhaka, same as district_rate_for().
+    if not (district or "").strip() and "dhaka" in exempt:
+        return Decimal("0")
+
+    from app.models.catalog_attribute import CatalogAttribute
+    from app.models.catalog_product_attribute_value import CatalogProductAttributeValue
+
+    codes = {r["attribute"] for r in rules}
+    ids = [pid for pid, _qty in lines if pid]
+    rows = (
+        db.query(CatalogProductAttributeValue.product_id, CatalogAttribute.code, CatalogProductAttributeValue.value)
+        .join(CatalogAttribute, CatalogAttribute.id == CatalogProductAttributeValue.attribute_id)
+        .filter(CatalogProductAttributeValue.product_id.in_(ids), CatalogAttribute.code.in_(codes))
+        .all()
+    )
+    by_product: Dict[str, Dict[str, str]] = {}
+    for pid, code, value in rows:
+        by_product.setdefault(pid, {})[code] = value or ""
+    total = Decimal("0")
+    for pid, qty in lines:
+        total += product_charge_for_values(rules, by_product.get(pid, {})) * max(int(qty), 0)
+    return total
 
 
 def is_shipping_method_allowed(db: Session, method_id: str) -> bool:

@@ -22,6 +22,17 @@ export async function upsertPlatformSetting(key: string, value: string): Promise
   });
 }
 
+export type ProductChargeAttribute = {
+  code: string;
+  name: string;
+  values: { value: string; count: number }[];
+};
+
+/** Filterable attributes and the values their published products carry (for the delivery-charge table). */
+export async function fetchProductChargeOptions(): Promise<ProductChargeAttribute[]> {
+  return apiFetch<ProductChargeAttribute[]>("/api/v1/platform-settings/shipping/product-charge-options");
+}
+
 export async function clearPlatformSetting(key: string): Promise<void> {
   await apiFetch(`/api/v1/platform-settings/${key}`, { method: "DELETE" });
 }

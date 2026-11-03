@@ -11,6 +11,7 @@ import { useSettingsStore } from "@/lib/store/settings-store";
 import { SettingsLayerNav } from "@/components/settings/settings-layer-nav";
 import { SettingFieldRow } from "@/components/settings/setting-field-row";
 import { ShippingDistrictRatesPanel } from "@/components/settings/shipping-district-rates-panel";
+import { ShippingProductChargesPanel } from "@/components/settings/shipping-product-charges-panel";
 import { ActivityTriggerButton } from "@/components/activity/activity-trigger-button";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -313,7 +314,7 @@ export function BusinessSettingsCategory({ categoryId, embedded = false }: Props
           </div>
           <div>
             {group.items
-              .filter((item) => item.key !== "shipping.district_rates")
+              .filter((item) => item.key !== "shipping.district_rates" && item.key !== "shipping.product_charges")
               .map((item) => (
                 <SettingFieldRow
                   key={item.key}
@@ -354,6 +355,28 @@ export function BusinessSettingsCategory({ categoryId, embedded = false }: Props
             }),
           )}
           onChangeRates={(json) => patchDraft("shipping.district_rates", json)}
+        />
+      )}
+
+      {categoryId === "shipping" && activeSection === "delivery" && (
+        <ShippingProductChargesPanel
+          chargesJson={String(
+            current({
+              key: "shipping.product_charges",
+              label: "Product Delivery Charges",
+              type: "textarea",
+              defaultValue: "[]",
+            }),
+          )}
+          exemptText={String(
+            current({
+              key: "shipping.product_charges_exempt",
+              label: "No Product Charge In",
+              type: "text",
+              defaultValue: "Dhaka",
+            }),
+          )}
+          onChangeCharges={(json) => patchDraft("shipping.product_charges", json)}
         />
       )}
     </>
