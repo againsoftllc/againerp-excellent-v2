@@ -58,7 +58,7 @@ from app.models.marketing_happy_hour import (  # noqa: F401 — register metadat
     MarketingHappyHourDeal,
     MarketingHappyHourSection,
 )
-from app.models.marketing_offer import MarketingOffer, MarketingOfferSection  # noqa: F401
+from app.models.marketing_offer import MarketingOffer, MarketingOfferDeal, MarketingOfferSection  # noqa: F401
 from app.models.seo_meta_record import SeoMetaRecord, dump_json as dump_json_list_seo
 from app.models.seo_audit_issue import SeoAuditIssue
 from app.models.seo_audit_run import SeoAuditRun

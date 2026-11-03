@@ -10,7 +10,7 @@ function OffersContent() {
       <div className="shrink-0">
         <h1 className="text-base font-semibold text-foreground">Offers</h1>
         <p className="text-sm text-muted-foreground">
-          BOGO, bundles, gifts, and tiered deals for the storefront.
+          Campaigns with hand-picked products and offer prices, running for a date range.
         </p>
       </div>
       <MarketingOffersPanel />

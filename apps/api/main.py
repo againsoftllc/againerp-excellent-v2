@@ -519,6 +519,9 @@ def _bootstrap() -> None:
         from app.routers.marketing_happy_hours import ensure_marketing_happy_hour_columns
 
         ensure_marketing_happy_hour_columns()
+        from app.routers.marketing_offers import ensure_marketing_offer_columns
+
+        ensure_marketing_offer_columns()
         ensure_catalog_stock_status_columns()
 
         ensure_workspace_site_company_id_column()

@@ -10,7 +10,8 @@ from pydantic import BaseModel
 from sqlalchemy.orm import Session, joinedload
 
 from app.database import get_db
-from app.models.marketing_offer import MarketingOffer
+from app.models.catalog_product_special import in_daily_window
+from app.models.marketing_offer import MarketingOffer, MarketingOfferSection
 from app.services.ecommerce.storefront_catalog_service import StorefrontCatalogService
 
 router = APIRouter(tags=["storefront-offer-pages"])
@@ -30,29 +31,46 @@ def _fmt_iso(dt: datetime) -> str:
     return dt.isoformat()
 
 
+def _terms_list(raw: str | None) -> list[str]:
+    import json
+
+    if not raw:
+        return []
+    try:
+        data = json.loads(raw)
+        if isinstance(data, list):
+            return [str(x).strip() for x in data if str(x).strip()]
+    except Exception:
+        pass
+    return []
+
+
 def _is_public(row: MarketingOffer, now: datetime) -> bool:
-    if row.status == "disabled":
-        return False
-    if row.status == "draft":
-        return False
-    if row.status == "ended":
+    if row.status in {"disabled", "draft", "ended"}:
         return False
     if row.status == "running":
         return True
     if row.status == "scheduled":
         return row.starts_at <= now <= row.ends_at
-    # fallback: treat unknown as live if within window
     return row.starts_at <= now <= row.ends_at
 
 
 class StorefrontOfferSummary(BaseModel):
     slug: str
     title: str
+    subtitle: Optional[str] = None
     description: str
     image: str
+    # When set, the storefront sends shoppers here instead of this offer's
+    # own product-grid page — both the "View Details" card link and a direct
+    # visit to the offer's own URL redirect to it.
+    customLink: Optional[str] = None
     startDate: str
     endDate: str
+    startDateISO: str
     endDateISO: str
+    dailyStartHour: Optional[int] = None
+    dailyEndHour: Optional[int] = None
     outletLabel: str
 
 
@@ -66,16 +84,17 @@ class StorefrontOfferProduct(BaseModel):
     thumbnail: Optional[str] = None
     brand: Optional[str] = None
     in_stock: bool = True
+    note: Optional[str] = None
 
 
 class StorefrontOfferSection(BaseModel):
     key: str
     label: str
-    category_slug: str
     products: List[StorefrontOfferProduct]
 
 
 class StorefrontOfferDetail(StorefrontOfferSummary):
+    terms: List[str]
     sections: List[StorefrontOfferSection]
 
 
@@ -87,74 +106,98 @@ class StorefrontOfferDetailResponse(BaseModel):
     data: StorefrontOfferDetail
 
 
-def _product_dict(view) -> StorefrontOfferProduct:
-    return StorefrontOfferProduct(
-        id=view.id,
-        item_id=view.item_id,
-        slug=view.slug,
-        name=view.name,
-        price=float(view.price),
-        compare_at_price=float(view.compare_at_price) if view.compare_at_price is not None else None,
-        thumbnail=view.thumbnail,
-        brand=view.brand or None,
-        in_stock=bool(view.in_stock),
-    )
-
-
 def _summary(row: MarketingOffer) -> StorefrontOfferSummary:
     return StorefrontOfferSummary(
         slug=row.slug,
         title=row.title,
+        subtitle=row.subtitle,
         description=row.description or "",
         image=row.image_url or "/images/offers/placeholder.svg",
+        customLink=row.custom_link,
         startDate=_fmt_display(row.starts_at),
         endDate=_fmt_display(row.ends_at),
+        startDateISO=_fmt_iso(row.starts_at),
         endDateISO=_fmt_iso(row.ends_at),
+        dailyStartHour=row.daily_start_hour,
+        dailyEndHour=row.daily_end_hour,
         outletLabel=row.outlet_label or "All Outlet",
     )
 
 
 def _detail(db: Session, row: MarketingOffer) -> StorefrontOfferDetail:
-    from app.models.catalog_category import CatalogCategory
-    from sqlalchemy import case
-
+    """Hand-picked deals, same shape as storefront_happy_hour.py `_detail`.
+    Outside the (optional) nightly window the sections come back empty — the
+    page itself (title/countdown/terms) still shows so shoppers know when it
+    opens, same nightly gating as Happy Hour."""
     catalog = StorefrontCatalogService(db)
-    limit = max(1, min(int(getattr(row, "products_limit", 12) or 12), 48))
     sections: List[StorefrontOfferSection] = []
-    for section in sorted(row.sections or [], key=lambda s: (s.sort_order, s.label)):
-        slug = (section.category_slug or "").strip()
-        if not slug:
-            continue
-        cat = (
-            db.query(CatalogCategory)
-            .filter(CatalogCategory.slug == slug)
-            .order_by(
-                case((CatalogCategory.channel == "catalog", 0), else_=1),
-                CatalogCategory.sort_order.asc(),
+    live_now = True  # an offer runs its whole date range - there is no nightly window
+    if live_now:
+        from app.models.catalog_product import CatalogProduct
+
+        all_slugs = {
+            (deal.product_slug or "").strip()
+            for section in row.sections or []
+            for deal in section.deals or []
+            if (deal.product_slug or "").strip()
+        }
+        raw_by_slug = {
+            p.slug: p
+            for p in (
+                db.query(CatalogProduct).filter(CatalogProduct.slug.in_(all_slugs)).all()
+                if all_slugs
+                else []
             )
-            .first()
-        )
-        if not cat:
-            # Unknown slug must NOT fall through to unfiltered catalog dump.
-            continue
-        result = catalog.list_products(
-            category_id=cat.id,
-            per_page=limit,
-            page=1,
-        )
-        products = [_product_dict(v) for v in result.items]
-        if not products:
-            continue
-        sections.append(
-            StorefrontOfferSection(
-                key=section.key or section.category_slug,
-                label=section.label,
-                category_slug=section.category_slug,
-                products=products,
+        }
+        for section in sorted(row.sections or [], key=lambda s: (s.sort_order, s.label)):
+            products: List[StorefrontOfferProduct] = []
+            for deal in sorted(
+                section.deals or [], key=lambda d: (d.priority or 0, d.sort_order, d.product_slug)
+            ):
+                slug = (deal.product_slug or "").strip()
+                if not slug:
+                    continue
+                # Disabled = its quota sold out (or the admin turned it off) —
+                # stop showing it on the campaign page, same as removing it.
+                if not deal.enabled:
+                    continue
+                view = catalog.get_by_slug(slug)
+                if not view:
+                    continue
+                # Every deal is listed. "Regular" = what the product normally sells for (the raw price, never the
+                # already-resolved `view.price`, which carries this deal once it is the active special). The offer price
+                # shows when it is below the regular one, else the regular price: an offer never raises a price.
+                raw = raw_by_slug.get(slug)
+                regular = float(raw.price) if raw is not None else float(view.compare_at_price if view.compare_at_price is not None else view.price)
+                list_price = float(raw.compare_at_price) if raw is not None and raw.compare_at_price else (float(view.compare_at_price) if view.compare_at_price is not None else None)
+                offer = float(deal.offer_price)
+                shown = offer if 0 < offer < regular else regular
+                strike = list_price if list_price is not None and list_price > shown else (regular if shown < regular else None)
+                products.append(
+                    StorefrontOfferProduct(
+                        id=view.id,
+                        item_id=view.item_id,
+                        slug=view.slug,
+                        name=view.name,
+                        price=shown,
+                        compare_at_price=strike,
+                        thumbnail=view.thumbnail,
+                        brand=view.brand or None,
+                        in_stock=bool(view.in_stock),
+                        note=(deal.note or None),
+                    )
+                )
+            if not products:
+                continue
+            sections.append(
+                StorefrontOfferSection(
+                    key=section.key,
+                    label=section.label,
+                    products=products,
+                )
             )
-        )
     base = _summary(row)
-    return StorefrontOfferDetail(**base.model_dump(), sections=sections)
+    return StorefrontOfferDetail(**base.model_dump(), terms=_terms_list(row.terms_json), sections=sections)
 
 
 @router.get("/offer-pages", response_model=StorefrontOfferListResponse)
@@ -163,20 +206,11 @@ def list_offer_pages(response: Response, db: Session = Depends(get_db)) -> Store
     now = datetime.utcnow()
     rows = (
         db.query(MarketingOffer)
-        .options(joinedload(MarketingOffer.sections))
+        .options(joinedload(MarketingOffer.sections).joinedload(MarketingOfferSection.deals))
         .order_by(MarketingOffer.sort_order.asc(), MarketingOffer.starts_at.desc())
         .all()
     )
-    live = [row for row in rows if _is_public(row, now)]
-    # Prefer running within date window for listing
-    visible: List[MarketingOffer] = []
-    for row in live:
-        if row.ends_at < now:
-            continue
-        if row.status == "scheduled" and row.starts_at > now:
-            continue
-        if row.status in {"running", "scheduled"} or (row.starts_at <= now <= row.ends_at):
-            visible.append(row)
+    visible = [row for row in rows if _is_public(row, now) and row.starts_at <= now <= row.ends_at]
     return StorefrontOfferListResponse(data=[_summary(row) for row in visible])
 
 
@@ -190,17 +224,13 @@ def get_offer_page(
     clean = slug.strip().strip("/")
     row = (
         db.query(MarketingOffer)
-        .options(joinedload(MarketingOffer.sections))
+        .options(joinedload(MarketingOffer.sections).joinedload(MarketingOfferSection.deals))
         .filter(MarketingOffer.slug == clean)
         .first()
     )
     if not row:
         raise HTTPException(status_code=404, detail="Offer not found")
     now = datetime.utcnow()
-    if not _is_public(row, now) and row.status not in {"running", "scheduled"}:
+    if not _is_public(row, now):
         raise HTTPException(status_code=404, detail="Offer not found")
-    detail = _detail(db, row)
-    if not detail.sections and row.status != "running":
-        # still show hero for empty catalog categories when offer is running
-        pass
-    return StorefrontOfferDetailResponse(data=detail)
+    return StorefrontOfferDetailResponse(data=_detail(db, row))

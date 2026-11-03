@@ -2,26 +2,48 @@ import { apiFetch } from "@/lib/api/client";
 
 export type OfferStatus = "draft" | "scheduled" | "running" | "ended" | "disabled";
 
+export type ApiOfferDeal = {
+  id?: string;
+  product_slug: string;
+  offer_price: number;
+  note?: string | null;
+  priority: number;
+  /** Deal quota — null/undefined means unlimited. */
+  quantity?: number | null;
+  /** Server-managed, incremented at checkout. Read-only in the UI. */
+  quantity_sold?: number;
+  /** Auto-flips off once quantity sells out; the admin can also toggle it. */
+  enabled?: boolean;
+  sort_order: number;
+};
+
 export type ApiOfferSection = {
   id?: string;
   key: string;
   label: string;
-  category_slug: string;
   sort_order: number;
+  deals: ApiOfferDeal[];
 };
 
 export type ApiMarketingOffer = {
   id: string;
   slug: string;
   title: string;
+  subtitle?: string | null;
   description: string;
   image_url?: string | null;
+  /** When set, the offer's "View Details" and its own detail page both
+   * redirect here instead of showing its product grid. */
+  custom_link?: string | null;
   outlet_label: string;
   starts_at: string;
   ends_at: string;
+  /** Optional nightly window — both null means "active all day". */
+  daily_start_hour: number | null;
+  daily_end_hour: number | null;
   status: OfferStatus;
+  terms: string[];
   sort_order: number;
-  products_limit: number;
   sections: ApiOfferSection[];
   created_at: string;
   updated_at: string;
@@ -30,19 +52,31 @@ export type ApiMarketingOffer = {
 export type OfferWriteInput = {
   slug: string;
   title: string;
+  subtitle?: string | null;
   description?: string;
   image_url?: string | null;
+  custom_link?: string | null;
   outlet_label?: string;
   starts_at: string;
   ends_at: string;
+  daily_start_hour?: number | null;
+  daily_end_hour?: number | null;
   status: OfferStatus;
+  terms?: string[];
   sort_order?: number;
-  products_limit?: number;
   sections: {
     key?: string;
     label: string;
-    category_slug: string;
     sort_order?: number;
+    deals: {
+      product_slug: string;
+      offer_price: number;
+      note?: string | null;
+      priority?: number;
+      quantity?: number | null;
+      enabled?: boolean;
+      sort_order?: number;
+    }[];
   }[];
 };
 
