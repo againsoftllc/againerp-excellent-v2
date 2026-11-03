@@ -1208,6 +1208,11 @@ function DealsTable({
                 ) : null}
                 <td className="px-1.5 py-1.5 text-muted-foreground">
                   {deal.regular_price ? money(deal.regular_price) : "—"}
+                  {product && Number(product.compareAtPrice) > (Number(deal.regular_price) || 0) ? (
+                    <span className="block text-[10px] line-through" title="Compare at price (struck through on the shop)">
+                      {money(product.compareAtPrice as number)}
+                    </span>
+                  ) : null}
                 </td>
                 <td className="px-1.5 py-1.5 text-muted-foreground">{product ? product.stock : "—"}</td>
                 <td className="px-1.5 py-1.5">
