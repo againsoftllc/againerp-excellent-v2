@@ -80,6 +80,8 @@ class ConfiguratorProductRead(BaseModel):
     attributes: Dict[str, str] = Field(default_factory=dict)
     # Stored values of the filterable attributes, keyed by attribute code (what the filter drawer matches on).
     filter_values: Dict[str, str] = Field(default_factory=dict)
+    # Exact figure behind a range value (filter_values "513GB to 1TB" -> "1TB"), only where the admin entered one.
+    filter_display: Dict[str, str] = Field(default_factory=dict)
 
 
 class ConfiguratorProductListResponse(BaseModel):
@@ -207,8 +209,11 @@ def get_configurator_profile(slug: str, db: Session = Depends(get_db)) -> Config
 def _with_filter_values(db: Session, rows: List[dict]) -> List[dict]:
     from app.services.ecommerce.storefront_catalog_service import StorefrontCatalogService
 
-    values = StorefrontCatalogService(db).filter_attributes_for_products([r["id"] for r in rows])
-    return [{**r, "filter_values": values.get(r["id"], {})} for r in rows]
+    svc = StorefrontCatalogService(db)
+    ids = [r["id"] for r in rows]
+    values = svc.filter_attributes_for_products(ids)
+    exact = svc.filter_display_for_products(ids)
+    return [{**r, "filter_values": values.get(r["id"], {}), "filter_display": exact.get(r["id"], {})} for r in rows]
 
 
 @router.get("/profiles/{slug}/categories/{category_slug}/filters")

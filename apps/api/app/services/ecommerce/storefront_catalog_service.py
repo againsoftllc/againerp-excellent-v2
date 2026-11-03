@@ -946,6 +946,35 @@ class StorefrontCatalogService:
             out.setdefault(pav.product_id, {})[attr.code] = value
         return out
 
+    def filter_display_for_products(self, product_ids: List[str]) -> Dict[str, Dict[str, str]]:
+        """Map catalog product id → { attribute_code: exact figure } for filterable range attrs.
+
+        `filter_attributes_for_products` returns the chosen range ("513GB to 1TB"); the exact figure
+        ("1TB") is the value's `display_value`. Only values that have one are listed.
+        """
+        ids = [pid for pid in product_ids if pid]
+        if not ids:
+            return {}
+        rows = (
+            self._db.query(CatalogProductAttributeValue, CatalogAttribute)
+            .join(
+                CatalogAttribute,
+                CatalogAttribute.id == CatalogProductAttributeValue.attribute_id,
+            )
+            .filter(
+                CatalogProductAttributeValue.product_id.in_(ids),
+                CatalogAttribute.is_filterable.is_(True),
+                CatalogAttribute.is_active.is_(True),
+            )
+            .all()
+        )
+        out: Dict[str, Dict[str, str]] = {}
+        for pav, attr in rows:
+            shown = (pav.display_value or "").strip()
+            if shown and shown != (pav.value or "").strip():
+                out.setdefault(pav.product_id, {})[attr.code] = shown
+        return out
+
     def all_attributes_for_products(self, product_ids: List[str]) -> Dict[str, Dict[str, str]]:
         """All stored spec values, including non-filterable fields used by PC Builder."""
         ids = [pid for pid in product_ids if pid]
