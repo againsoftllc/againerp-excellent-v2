@@ -378,9 +378,14 @@ function NavMenuItem({
               borderColor: CATALOG_NAV.dropdownBorder,
             }}
             onMouseEnter={() => {
+              // The pointer left the main list to reach this flyout: keep BOTH open (the main list's own leave timer would otherwise close everything).
               if (subCloseTimer.current) clearTimeout(subCloseTimer.current);
+              if (closeTimer.current) clearTimeout(closeTimer.current);
             }}
-            onMouseLeave={hideSubMenu}
+            onMouseLeave={() => {
+              hideSubMenu();
+              hideMenu();
+            }}
           >
             {subOpenEntry.children.map((child) => (
               <button
