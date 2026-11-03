@@ -179,9 +179,21 @@ function dealFromProduct(
   };
 }
 
-function productsForCategory(products: Product[], categoryId: string): Product[] {
+/** The products of a category AND of every category below it (Laptop covers Laptop > Gaming Laptop > Acer), however deep a product is filed. */
+function productsForCategory(products: Product[], categoryId: string, categories: Category[]): Product[] {
   if (!categoryId) return [];
-  return products.filter((p) => (p.categoryIds || []).includes(categoryId));
+  const wanted = new Set<string>([categoryId]);
+  let grew = true;
+  while (grew) {
+    grew = false;
+    for (const c of categories) {
+      if (c.parentId && wanted.has(c.parentId) && !wanted.has(c.id)) {
+        wanted.add(c.id);
+        grew = true;
+      }
+    }
+  }
+  return products.filter((p) => (p.categoryIds || []).some((id) => wanted.has(id)));
 }
 
 function money(n: number | string) {
@@ -627,7 +639,7 @@ function HappyHourFormSheet({
       toast.error("Select a category first");
       return;
     }
-    const pool = productsForCategory(products, categoryId);
+    const pool = productsForCategory(products, categoryId, categories);
     if (pool.length === 0) {
       toast.error("No catalog products in this category");
       return;
@@ -1338,7 +1350,7 @@ function SectionEditorSheet({
   onAddPickedProduct: (productId: string) => void;
   onClose: () => void;
 }) {
-  const categoryProducts = section ? productsForCategory(products, section.category_id) : [];
+  const categoryProducts = section ? productsForCategory(products, section.category_id, categoriesForPicker) : [];
   const pickerProducts = section?.category_id
     ? categoryProducts.length
       ? categoryProducts
