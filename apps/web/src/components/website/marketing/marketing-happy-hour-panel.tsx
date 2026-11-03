@@ -130,10 +130,9 @@ function emptySection(): SectionDraft {
   };
 }
 
+/** The regular price of a product is its own selling price (Price BDT) - not the struck-through compare-at price. */
 function productRegularPrice(product: Product): number {
-  const price = Number(product.price) || 0;
-  const compare = Number(product.compareAtPrice) || 0;
-  return compare > price ? compare : price;
+  return Number(product.price) || 0;
 }
 
 function calcOfferPrice(
