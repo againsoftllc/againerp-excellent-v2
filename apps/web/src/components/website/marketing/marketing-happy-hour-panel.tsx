@@ -1202,7 +1202,6 @@ function DealsTable({
                   <p className="truncate font-medium text-foreground">
                     {deal.product_name || deal.product_slug}
                   </p>
-                  <p className="truncate text-[10px] text-muted-foreground">{deal.product_slug}</p>
                   {product && product.status !== "published" ? (
                     <p className="text-[10px] font-medium text-destructive">
                       {product.status === "draft" ? "Draft" : `Not published (${product.status})`} - not shown on the site until it is published
