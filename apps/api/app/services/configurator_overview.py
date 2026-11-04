@@ -158,12 +158,12 @@ def build_overview(db: Session, profile_slug: str = "pc-builder", slot_id: Optio
     # Pool for "profile" issues: products that belong to some slot that has an
     # identifying spec. Slots with no condition (monitor, keyboard…) have no
     # spec to confuse them with, so they stay out of the pool.
-    pool: Dict[str, Tuple[Any, str]] = {}
+    pool: Dict[str, Tuple[Any, ConfiguratorCategory]] = {}
     for cat in categories:
         if not entry_field(cat):
             continue
         for v in base_by_cat[cat.id]:
-            pool.setdefault(v.id, (v, cat.name))
+            pool.setdefault(v.id, (v, cat))
 
     slots_out: List[Dict[str, Any]] = []
     issues: List[Dict[str, Any]] = []
@@ -198,8 +198,14 @@ def build_overview(db: Session, profile_slug: str = "pc-builder", slot_id: Optio
                     add("missing", v.id, v.name, entry)
 
             # profile: another slot's product that carries this slot's identifying spec
-            for pid, (view, home) in pool.items():
+            this_profile = (getattr(cat, "attribute_profile_id", None) or "").strip()
+            for pid, (view, home_cat) in pool.items():
                 if pid in base_ids or pid in shown_ids or overrides.get((cat.id, pid)) in ("exclude", "ignore"):
+                    continue
+                # A product that sits in another slot through that slot's own attribute profile (an SSD under
+                # "SSD Specifications") is not a mis-filed product just because it shares a spec name (Capacity).
+                home_profile = (getattr(home_cat, "attribute_profile_id", None) or "").strip()
+                if home_profile and home_profile != this_profile:
                     continue
                 pattrs = attr_cache.get(pid, {})
                 # A board's socket comes from the chipset lookup, not from its own spec,
@@ -208,7 +214,7 @@ def build_overview(db: Session, profile_slug: str = "pc-builder", slot_id: Optio
                     continue
                 value = str(pattrs.get(entry, "")).strip()
                 if value:
-                    add("profile", pid, view.name, entry, from_slot=home, value=value)
+                    add("profile", pid, view.name, entry, from_slot=home_cat.name, value=value)
 
         component = SLOT_TO_COMPONENT.get(cat.slug)
         needed = rule_fields.get(component or "", [])

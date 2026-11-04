@@ -3,6 +3,8 @@ from __future__ import annotations
 import json
 from typing import Dict, List, Optional, Set
 
+from sqlalchemy import func
+
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
@@ -11,6 +13,7 @@ from app.database import get_db
 from app.models.catalog_attribute import CatalogAttribute
 from app.models.catalog_attribute_group import CatalogAttributeGroup
 from app.models.catalog_attribute_profile import CatalogAttributeProfile
+from app.models.catalog_product import CatalogProduct
 from app.models.catalog_filter import CatalogFilter
 from app.services.catalog_filter_sync import sync_attribute_filters
 from app.models.catalog_product_attribute_value import CatalogProductAttributeValue
@@ -125,10 +128,18 @@ def _counts_for_profiles(
     profile_ids: List[str],
 ) -> Dict[str, Dict[str, int]]:
     counts: Dict[str, Dict[str, int]] = {
-        pid: {"groups": 0, "attributes": 0} for pid in profile_ids
+        pid: {"groups": 0, "attributes": 0, "products": 0} for pid in profile_ids
     }
     if not profile_ids:
         return counts
+
+    for profile_id, n in (
+        db.query(CatalogProduct.attribute_profile_id, func.count(CatalogProduct.id))
+        .filter(CatalogProduct.attribute_profile_id.in_(profile_ids))
+        .group_by(CatalogProduct.attribute_profile_id)
+        .all()
+    ):
+        counts[profile_id]["products"] = int(n)
 
     groups = db.query(CatalogAttributeGroup).filter(
         CatalogAttributeGroup.profile_id.in_(profile_ids),
@@ -223,6 +234,7 @@ def list_profiles(db: Session = Depends(get_db)) -> AttributeProfileListResponse
             r,
             counts[r.id]["groups"],
             counts[r.id]["attributes"],
+            counts[r.id]["products"],
         )
         for r in rows
     ]
