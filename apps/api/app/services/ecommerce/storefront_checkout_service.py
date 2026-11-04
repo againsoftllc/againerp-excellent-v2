@@ -42,7 +42,7 @@ from app.services.ecommerce.checkout_payment_availability import (
 from app.services.ecommerce.checkout_shipping_availability import (
     is_shipping_method_allowed,
     pickup_point_label,
-    product_delivery_extra,
+    product_delivery_charge,
     resolve_shipping_amount,
     shipping_options_payload,
 )
@@ -201,17 +201,16 @@ class StorefrontCheckoutService:
 
         taxable = max(subtotal - discount, Decimal("0"))
         # Nothing to ship — a digital-only order never carries a delivery charge.
-        shipping = (
-            Decimal("0")
-            if self._cart_svc.is_digital_only_cart(cart)
-            else resolve_shipping_amount(self._db, shipping_method, subtotal, district=district)
-            + product_delivery_extra(
+        if self._cart_svc.is_digital_only_cart(cart):
+            shipping = Decimal("0")
+        else:
+            shipping = product_delivery_charge(
                 self._db,
                 shipping_method,
                 [(line.product_id, line.quantity) for line in cart.items],
                 district=district,
+                base=resolve_shipping_amount(self._db, shipping_method, subtotal, district=district),
             )
-        )
         # Shipping is taxed only when the admin says so.
         if shipping_is_taxable(self._db):
             taxable += shipping

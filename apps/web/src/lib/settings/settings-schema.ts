@@ -593,10 +593,17 @@ export const BUSINESS_SETTINGS_CATEGORIES: SettingCategoryDef[] = [
                 defaultValue: "[]",
               },
               {
+                key: "shipping.product_charge_mode",
+                label: "Product Charge Type",
+                description: "extra = added to the district price; fixed = replaces the district / express price. Managed by the product delivery charge table.",
+                type: "text",
+                defaultValue: "extra",
+              },
+              {
                 key: "shipping.product_charges_exempt",
                 label: "No Product Charge In",
                 description:
-                  "Comma-separated districts where product delivery charges are NOT added, so only the district price applies (e.g. Dhaka).",
+                  "Comma-separated districts where product delivery charges are NOT used, so only the district price applies (e.g. Dhaka). Leave empty to use them in every district, Dhaka included.",
                 type: "text",
                 defaultValue: "Dhaka",
               },

@@ -41,6 +41,7 @@ _SHIPPING_KEYS: tuple[tuple[str, str, str], ...] = (
     ("shipping.district_rates", "District rates", "JSON map of district to delivery charge"),
     ("shipping.product_charges", "Product delivery charges", "JSON list of attribute value to extra delivery charge per unit"),
     ("shipping.product_charges_exempt", "Product charge exempt districts", "Comma-separated districts where product delivery charges are not added"),
+    ("shipping.product_charge_mode", "Product charge type", "extra = added to the district rate, fixed = replaces the district / express rate"),
 )
 
 _TAX_KEYS: tuple[tuple[str, str, str], ...] = (

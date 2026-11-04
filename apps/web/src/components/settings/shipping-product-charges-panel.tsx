@@ -11,6 +11,9 @@ type Rule = { attribute: string; charges: Record<string, number> };
 type Props = {
   chargesJson: string;
   exemptText: string;
+  /** "extra" (added to the district rate) or "fixed" (replaces it). */
+  mode: string;
+  onChangeMode: (mode: string) => void;
   onChangeCharges: (json: string) => void;
 };
 
@@ -37,7 +40,8 @@ function parseRules(json: string): Rule[] {
 }
 
 /** Per-unit extra delivery charge by product attribute value, e.g. Screen Size "26-30 inch" → ৳300. */
-export function ShippingProductChargesPanel({ chargesJson, exemptText, onChangeCharges }: Props) {
+export function ShippingProductChargesPanel({ chargesJson, exemptText, mode, onChangeMode, onChangeCharges }: Props) {
+  const fixed = mode.trim().toLowerCase() === "fixed";
   const [options, setOptions] = useState<ProductChargeAttribute[] | null>(null);
   const [failed, setFailed] = useState(false);
   const rules = parseRules(chargesJson);
@@ -87,12 +91,29 @@ export function ShippingProductChargesPanel({ chargesJson, exemptText, onChangeC
           Product Delivery Charges (BDT, once per order)
         </p>
         <p className="mt-0.5 text-[11px] text-muted-foreground">
-          Extra charge added to Home Delivery when the cart holds a product whose attribute matches (e.g. monitors by Screen Size). It is added once: the largest matching charge in the cart applies, however many units or products.
+          {fixed
+            ? "When the cart holds a product whose attribute matches (e.g. monitors by Screen Size), the delivery charge is the amount below instead of the district / express price."
+            : "Added on top of the district price when the cart holds a product whose attribute matches (e.g. monitors by Screen Size)."}{" "}
+          The largest matching amount in the cart applies, however many units or products.
           {exempt.length > 0
-            ? ` Not added in: ${exempt.join(", ")} — there only the district price applies.`
-            : " Added in every district."}{" "}
+            ? ` Not used in: ${exempt.join(", ")} — there only the district price applies.`
+            : " Used in every district, Dhaka included."}{" "}
           Store Pickup never gets it.
         </p>
+        <div className="mt-2 flex flex-col gap-1.5 sm:flex-row sm:items-center">
+          <label className="text-[11px] font-medium text-muted-foreground" htmlFor="product-charge-mode">
+            Charge type
+          </label>
+          <Select
+            id="product-charge-mode"
+            value={fixed ? "fixed" : "extra"}
+            onChange={(e) => onChangeMode(e.target.value)}
+            className="h-8 w-full sm:w-80"
+          >
+            <option value="extra">Extra on top of the district price</option>
+            <option value="fixed">Fixed delivery charge (replaces the district price)</option>
+          </Select>
+        </div>
       </div>
 
       {failed && <p className="px-4 py-3 text-xs text-destructive">Could not load the attribute list.</p>}

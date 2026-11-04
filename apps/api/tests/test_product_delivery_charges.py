@@ -48,3 +48,27 @@ def test_largest_extra_is_charged_once_not_per_unit_or_product():
     assert largest_extra([Decimal("30"), Decimal("150")]) == Decimal("150")
     assert largest_extra([Decimal("0"), Decimal("0")]) == Decimal("0")
     assert largest_extra([]) == Decimal("0")
+
+
+def test_exempt_districts_unset_means_dhaka_empty_means_none():
+    from app.services.ecommerce.checkout_shipping_availability import parse_exempt_districts
+
+    assert parse_exempt_districts(None) == {"dhaka"}
+    assert parse_exempt_districts("") == set()
+    assert parse_exempt_districts("  ") == set()
+    assert parse_exempt_districts("Dhaka, Gazipur\nNarayanganj") == {"dhaka", "gazipur", "narayanganj"}
+
+
+def test_apply_product_charge_extra_and_fixed_modes():
+    from app.services.ecommerce.checkout_shipping_availability import apply_product_charge
+
+    base = Decimal("120")
+    # no product charge: the rate as it is, in either mode
+    assert apply_product_charge(base, Decimal("0"), "extra") == Decimal("120")
+    assert apply_product_charge(base, Decimal("0"), "fixed") == Decimal("120")
+    # extra: on top of the rate
+    assert apply_product_charge(base, Decimal("320"), "extra") == Decimal("440")
+    assert apply_product_charge(base, Decimal("320"), "") == Decimal("440")
+    # fixed: the whole delivery charge, even when lower than the district rate
+    assert apply_product_charge(base, Decimal("500"), "fixed") == Decimal("500")
+    assert apply_product_charge(base, Decimal("100"), " FIXED ") == Decimal("100")

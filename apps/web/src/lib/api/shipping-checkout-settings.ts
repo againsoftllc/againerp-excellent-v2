@@ -15,6 +15,7 @@ export const SHIPPING_PLATFORM_KEYS = [
   "shipping.district_rates",
   "shipping.product_charges",
   "shipping.product_charges_exempt",
+  "shipping.product_charge_mode",
 ] as const;
 
 export type ShippingPlatformKey = (typeof SHIPPING_PLATFORM_KEYS)[number];

@@ -314,7 +314,7 @@ export function BusinessSettingsCategory({ categoryId, embedded = false }: Props
           </div>
           <div>
             {group.items
-              .filter((item) => item.key !== "shipping.district_rates" && item.key !== "shipping.product_charges")
+              .filter((item) => item.key !== "shipping.district_rates" && item.key !== "shipping.product_charges" && item.key !== "shipping.product_charge_mode")
               .map((item) => (
                 <SettingFieldRow
                   key={item.key}
@@ -376,6 +376,15 @@ export function BusinessSettingsCategory({ categoryId, embedded = false }: Props
               defaultValue: "Dhaka",
             }),
           )}
+          mode={String(
+            current({
+              key: "shipping.product_charge_mode",
+              label: "Product Charge Type",
+              type: "text",
+              defaultValue: "extra",
+            }),
+          )}
+          onChangeMode={(mode) => patchDraft("shipping.product_charge_mode", mode)}
           onChangeCharges={(json) => patchDraft("shipping.product_charges", json)}
         />
       )}

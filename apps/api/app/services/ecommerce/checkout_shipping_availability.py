@@ -8,7 +8,8 @@ Rules:
 - Free shipping only when `shipping.free_threshold` > 0 and subtotal meets it.
 - Product delivery charges (`shipping.product_charges`): an extra charge per unit for products whose
   attribute value (e.g. Screen Size "26-30 inch") has a price, added to Home Delivery outside the
-  districts listed in `shipping.product_charges_exempt` (Dhaka by default).
+  districts listed in `shipping.product_charges_exempt` (Dhaka until the admin saves the field; an empty field
+  exempts no district). With `shipping.product_charge_mode` = "fixed" it is the whole delivery charge instead.
 """
 
 from __future__ import annotations
@@ -72,6 +73,8 @@ SHIPPING_SETTING_DEFAULTS: Dict[str, str] = {
     "shipping.product_charges": "[]",
     # Districts where product delivery charges are not added (the district rate alone applies).
     "shipping.product_charges_exempt": "Dhaka",
+    # "extra": the charge is added to the district rate; "fixed": it replaces the district / express rate.
+    "shipping.product_charge_mode": "extra",
     "shipping.pickup_points": json.dumps(DEFAULT_PICKUP_POINTS, ensure_ascii=False),
     # Only the districts an admin has edited; the rest fall back to the built-in
     # list, so this stays small instead of copying all 64 districts.
@@ -523,33 +526,60 @@ def largest_extra(unit_extras: List[Decimal]) -> Decimal:
     return max(unit_extras, default=Decimal("0"))
 
 
-def product_delivery_extra(
+def parse_exempt_districts(raw: Optional[str]) -> set[str]:
+    """Districts that keep the plain district rate. None = never set: Dhaka. Empty = no district."""
+    if raw is None:
+        return {"dhaka"}
+    return {d.strip().lower() for d in str(raw).replace("\n", ",").split(",") if d.strip()}
+
+
+def apply_product_charge(base: Decimal, charge: Decimal, mode: str) -> Decimal:
+    """Delivery charge for a cart whose largest product charge is `charge`, on a district / method rate `base`.
+
+    No product charge: the rate as it is. "fixed": the product charge is the whole delivery charge.
+    Otherwise ("extra"): it is added on top of the rate.
+    """
+    if charge <= 0:
+        return base
+    return charge if (mode or "").strip().lower() == "fixed" else base + charge
+
+
+def _exempt_districts(db: Session) -> set[str]:
+    # Read the row itself: load_shipping_settings() turns an empty value into the default, and here an
+    # empty field must mean "no exempt district".
+    row = db.query(PlatformSetting).filter(PlatformSetting.key == "shipping.product_charges_exempt").first()
+    return parse_exempt_districts(None if row is None else row.value or "")
+
+
+def product_delivery_charge(
     db: Session,
     method_id: str,
     lines: List[tuple[str, int]],
     *,
     district: str = "",
+    base: Decimal,
 ) -> Decimal:
-    """Extra delivery charge for the cart: the largest per-product extra, charged once (see largest_extra).
+    """The delivery charge for the cart once its products are taken into account.
 
-    `lines` is [(catalog_product_id, quantity)]; quantity does not multiply it. Nothing is added for
-    pickup / free methods or when the district is exempt (Dhaka by default).
+    `lines` is [(catalog_product_id, quantity)] and `base` the district / method rate. The cart's product
+    charge is the single largest matching one (see largest_extra), never multiplied by quantity. Pickup and
+    free methods, and exempt districts, keep `base`.
     """
     if not lines:
-        return Decimal("0")
+        return base
     s = load_shipping_settings(db)
     rules = parse_product_charge_rules(s.get("shipping.product_charges"))
     if not rules:
-        return Decimal("0")
+        return base
     method = {m["id"]: m for m in list_available_shipping_options(db)}.get(method_id)
     if not method or method["id"] == "pickup" or (method.get("pricing") or "flat") == "free":
-        return Decimal("0")
-    exempt = {d.strip().lower() for d in _split_list(s.get("shipping.product_charges_exempt"), [])}
+        return base
+    exempt = _exempt_districts(db)
     if (district or "").strip().lower() in exempt:
-        return Decimal("0")
+        return base
     # No district picked yet: the customer is assumed to be in Dhaka, same as district_rate_for().
     if not (district or "").strip() and "dhaka" in exempt:
-        return Decimal("0")
+        return base
 
     from app.models.catalog_attribute import CatalogAttribute
     from app.models.catalog_product_attribute_value import CatalogProductAttributeValue
@@ -565,9 +595,10 @@ def product_delivery_extra(
     by_product: Dict[str, Dict[str, str]] = {}
     for pid, code, value in rows:
         by_product.setdefault(pid, {})[code] = value or ""
-    return largest_extra(
+    charge = largest_extra(
         [product_charge_for_values(rules, by_product.get(pid, {})) for pid, qty in lines if int(qty) > 0]
     )
+    return apply_product_charge(base, charge, s.get("shipping.product_charge_mode") or "extra")
 
 
 def is_shipping_method_allowed(db: Session, method_id: str) -> bool:
