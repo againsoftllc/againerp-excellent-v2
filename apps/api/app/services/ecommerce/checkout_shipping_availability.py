@@ -515,6 +515,14 @@ def product_charge_for_values(rules: List[Dict[str, Any]], values: Dict[str, str
     return total
 
 
+def largest_extra(unit_extras: List[Decimal]) -> Decimal:
+    """The cart's product delivery surcharge: the single largest per-unit extra among its products.
+
+    It is charged once per order — more units, or several different large products, do not add up.
+    """
+    return max(unit_extras, default=Decimal("0"))
+
+
 def product_delivery_extra(
     db: Session,
     method_id: str,
@@ -522,10 +530,10 @@ def product_delivery_extra(
     *,
     district: str = "",
 ) -> Decimal:
-    """Extra delivery charge for the cart: sum of (per-unit product charge × quantity).
+    """Extra delivery charge for the cart: the largest per-product extra, charged once (see largest_extra).
 
-    `lines` is [(catalog_product_id, quantity)]. Nothing is added for pickup / free methods or when the
-    district is exempt (Dhaka by default).
+    `lines` is [(catalog_product_id, quantity)]; quantity does not multiply it. Nothing is added for
+    pickup / free methods or when the district is exempt (Dhaka by default).
     """
     if not lines:
         return Decimal("0")
@@ -557,10 +565,9 @@ def product_delivery_extra(
     by_product: Dict[str, Dict[str, str]] = {}
     for pid, code, value in rows:
         by_product.setdefault(pid, {})[code] = value or ""
-    total = Decimal("0")
-    for pid, qty in lines:
-        total += product_charge_for_values(rules, by_product.get(pid, {})) * max(int(qty), 0)
-    return total
+    return largest_extra(
+        [product_charge_for_values(rules, by_product.get(pid, {})) for pid, qty in lines if int(qty) > 0]
+    )
 
 
 def is_shipping_method_allowed(db: Session, method_id: str) -> bool:

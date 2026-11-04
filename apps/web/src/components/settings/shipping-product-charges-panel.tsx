@@ -84,10 +84,10 @@ export function ShippingProductChargesPanel({ chargesJson, exemptText, onChangeC
     <div className="overflow-hidden rounded-none border border-border bg-card shadow-sm">
       <div className="border-b border-border bg-muted/30 px-4 py-2.5">
         <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-          Product Delivery Charges (BDT, per unit)
+          Product Delivery Charges (BDT, once per order)
         </p>
         <p className="mt-0.5 text-[11px] text-muted-foreground">
-          Extra charge added to Home Delivery for each product whose attribute matches (e.g. monitors by Screen Size).
+          Extra charge added to Home Delivery when the cart holds a product whose attribute matches (e.g. monitors by Screen Size). It is added once: the largest matching charge in the cart applies, however many units or products.
           {exempt.length > 0
             ? ` Not added in: ${exempt.join(", ")} — there only the district price applies.`
             : " Added in every district."}{" "}

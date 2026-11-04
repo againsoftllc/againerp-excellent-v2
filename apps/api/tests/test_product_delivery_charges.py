@@ -36,3 +36,15 @@ def test_rules_add_up():
         '[{"attribute":"a","charges":{"x":10}},{"attribute":"b","charges":{"y":5}}]'
     )
     assert product_charge_for_values(rules, {"a": "x", "b": "y"}) == Decimal("15")
+
+
+def test_largest_extra_is_charged_once_not_per_unit_or_product():
+    from app.services.ecommerce.checkout_shipping_availability import largest_extra
+
+    assert largest_extra([Decimal("30")]) == Decimal("30")
+    # 5 units of the same product are still one extra: the caller passes one entry per product line
+    assert largest_extra([Decimal("30"), Decimal("30")]) == Decimal("30")
+    # a 23.8" (+30) and a 27" (+150) in one cart: the larger one, not 180
+    assert largest_extra([Decimal("30"), Decimal("150")]) == Decimal("150")
+    assert largest_extra([Decimal("0"), Decimal("0")]) == Decimal("0")
+    assert largest_extra([]) == Decimal("0")
