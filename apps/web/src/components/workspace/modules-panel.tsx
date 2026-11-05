@@ -26,6 +26,8 @@ import {
 import { isCenterManagedModule } from "@/lib/center/entitlements";
 import { useAdminCanWrite } from "@/lib/hooks/use-admin-can-write";
 import { moduleSettingsHref } from "@/lib/workspace/module-settings-href";
+import { setModuleEnabledEverywhere } from "@/lib/workspace/module-visibility-sync";
+import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 
 export const MODULE_DESCRIPTIONS: Record<string, string> = {
@@ -63,7 +65,6 @@ const FILTERS: { id: StatusFilter; label: string }[] = [
 
 export function ModulesPanel({ embedded = false }: { embedded?: boolean }) {
   const enabled = useModuleSettingsStore((s) => s.enabled);
-  const setModuleEnabled = useModuleSettingsStore((s) => s.setModuleEnabled);
   const centerBound = useModuleSettingsStore((s) => s.centerBound);
   const centerPlan = useModuleSettingsStore((s) => s.centerPlan);
   const centerClientName = useModuleSettingsStore((s) => s.centerClientName);
@@ -276,7 +277,9 @@ export function ModulesPanel({ embedded = false }: { embedded?: boolean }) {
                     aria-label={`${checked ? "Disable" : "Enable"} ${module.title}`}
                     onCheckedChange={(next) => {
                       if (alwaysOn || !isToggleableModuleId(module.id)) return;
-                      setModuleEnabled(module.id, next);
+                      void setModuleEnabledEverywhere(module.id, next).catch((err) =>
+                        toast.error(err instanceof Error ? err.message : "Could not save the change for all users"),
+                      );
                     }}
                     className="peer mt-0.5 inline-flex h-5 w-9 shrink-0 cursor-pointer items-center rounded-full border-2 border-transparent shadow-sm transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50 data-[state=checked]:bg-primary data-[state=unchecked]:bg-input"
                   >

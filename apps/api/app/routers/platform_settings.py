@@ -282,6 +282,12 @@ KNOWN_KEYS: dict[str, dict[str, Any]] = {
         "group": "plugins",
         "label": "AI Search Plugin",
     },
+    "workspace.disabled_modules": {
+        "description": "JSON list of workspace module ids turned off for every user (Workspace > Apps)",
+        "is_secret": False,
+        "group": "workspace",
+        "label": "Disabled workspace modules",
+    },
     "plugin.ai_search.enabled": {
         "description": "AI Search answers storefront questions (needs the OpenAI key under AI settings)",
         "is_secret": False,

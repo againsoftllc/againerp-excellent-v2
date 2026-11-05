@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { ChevronDown, Star } from "lucide-react";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { cn } from "@/lib/utils";
 import { BRAND_PROJECT_NAME, BRAND_SUITE_NAME } from "@/lib/brand";
 import { useAppStore } from "@/lib/store/app-store";
@@ -13,6 +13,7 @@ import {
   useModuleSettingsStore,
 } from "@/lib/store/module-settings-store";
 import { NAV_MODULE_MAP, hasPermission } from "@/lib/auth/permissions";
+import { loadModuleVisibility } from "@/lib/workspace/module-visibility-sync";
 import {
   flattenWorkspaceNav,
   workspaceDashboardItem,
@@ -210,6 +211,11 @@ export function WorkspaceSidebar({ className, onNavigate }: Props) {
   const permissions = useAdminAuth((s) => s.permissions);
   const role = useAdminAuth((s) => s.user?.role);
   const enabledModules = useAdminAuth((s) => s.enabledModules);
+
+  // Which modules are off is one workspace-wide setting kept on the server; the browser copy is only a cache.
+  useEffect(() => {
+    void loadModuleVisibility();
+  }, []);
 
   const visibleNavItems = useMemo(
     () =>

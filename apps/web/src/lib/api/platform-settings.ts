@@ -22,6 +22,23 @@ export async function upsertPlatformSetting(key: string, value: string): Promise
   });
 }
 
+export const DISABLED_MODULES_KEY = "workspace.disabled_modules";
+
+/** Module ids turned off for every user, or null when the server could not be asked. */
+export async function fetchDisabledModules(): Promise<string[] | null> {
+  try {
+    const row = await apiFetch<PlatformSetting>(`/api/v1/platform-settings/${DISABLED_MODULES_KEY}`);
+    const parsed = JSON.parse((row.value ?? "").trim() || "[]");
+    return Array.isArray(parsed) ? parsed.map(String) : [];
+  } catch {
+    return null;
+  }
+}
+
+export async function saveDisabledModules(ids: string[]): Promise<void> {
+  await upsertPlatformSetting(DISABLED_MODULES_KEY, JSON.stringify(ids));
+}
+
 export type ProductChargeAttribute = {
   code: string;
   name: string;

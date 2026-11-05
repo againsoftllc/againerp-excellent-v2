@@ -26,6 +26,7 @@ export const TOGGLEABLE_MODULE_IDS = [
   "accounting",
   "crm",
   "customers",
+  "expenses",
 ] as const;
 
 export type ToggleableModuleId = (typeof TOGGLEABLE_MODULE_IDS)[number];
@@ -42,6 +43,8 @@ type ModuleSettingsState = {
   centerAiAccessStatus: string | null;
   centerError: string | null;
   setModuleEnabled: (id: ToggleableModuleId, enabled: boolean) => void;
+  /** The server decides which modules are off for everyone; this browser only caches it. */
+  hydrateDisabledFromServer: (disabled: string[]) => void;
   applyCenterEntitlements: (payload: {
     bound: boolean;
     data?: CenterEntitlements;
@@ -69,6 +72,18 @@ export const useModuleSettingsStore = create<ModuleSettingsState>()(
       setModuleEnabled: (id, enabled) => {
         if (get().centerBound && isCenterManagedModule(id)) return;
         set((state) => ({ enabled: { ...state.enabled, [id]: enabled } }));
+      },
+      hydrateDisabledFromServer: (disabled) => {
+        const off = new Set(disabled);
+        set((state) => ({
+          enabled: Object.fromEntries(
+            TOGGLEABLE_MODULE_IDS.map((id) => {
+              // a module Center manages keeps the value Center gave it
+              const managed = state.centerBound && isCenterManagedModule(id);
+              return [id, managed ? state.enabled[id] !== false : !off.has(id)];
+            }),
+          ) as Record<ToggleableModuleId, boolean>,
+        }));
       },
       applyCenterEntitlements: ({ bound, data, error }) => {
         if (!bound || !data) {

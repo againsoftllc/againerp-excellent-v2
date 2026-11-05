@@ -10,6 +10,7 @@ import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigge
 import { Input } from "@/components/ui/input";
 import { workspaceDashboardItem, workspaceNavItems } from "@/lib/workspace/navigation-config";
 import { isToggleableModuleId, useModuleSettingsStore } from "@/lib/store/module-settings-store";
+import { setModuleEnabledEverywhere } from "@/lib/workspace/module-visibility-sync";
 import { isCenterManagedModule } from "@/lib/center/entitlements";
 import { useAdminCanWrite } from "@/lib/hooks/use-admin-can-write";
 import { moduleSettingsHref } from "@/lib/workspace/module-settings-href";
@@ -102,7 +103,6 @@ const FILTERS: { id: Filter; label: string }[] = [
 export function AppsGrid() {
   const canWrite = useAdminCanWrite();
   const enabled = useModuleSettingsStore((s) => s.enabled);
-  const setModuleEnabled = useModuleSettingsStore((s) => s.setModuleEnabled);
   const centerBound = useModuleSettingsStore((s) => s.centerBound);
   const plugins = usePluginsStore((s) => s.plugins);
   const isPluginVisible = usePluginsStore((s) => s.isPluginVisible);
@@ -145,7 +145,9 @@ export function AppsGrid() {
         settingsHref: moduleSettingsHref(m.id),
         toggle: (next: boolean) => {
           if (alwaysOn || !isToggleableModuleId(m.id)) return;
-          setModuleEnabled(m.id, next);
+          void setModuleEnabledEverywhere(m.id, next).catch((err) =>
+            toast.error(err instanceof Error ? err.message : "Could not save the change for all users"),
+          );
         },
       };
     });
@@ -172,7 +174,7 @@ export function AppsGrid() {
     });
     return [...modules, ...pluginItems];
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [enabled, centerBound, plugins, pluginCenterBound, isPluginVisible, setModuleEnabled]);
+  }, [enabled, centerBound, plugins, pluginCenterBound, isPluginVisible]);
 
   const visible = useMemo(() => {
     const q = query.trim().toLowerCase();
