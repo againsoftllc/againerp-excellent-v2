@@ -60,6 +60,7 @@ const NAV_GROUPS_BASE: NavGroup[] = [
       { id: "layout", label: "Layout", href: "/website/layout" },
       { id: "menus", label: "Menus", href: "/website/menus" },
       { id: "branches", label: "Branches", href: "/website/branches" },
+      { id: "messages", label: "Messages", href: "/website/messages" },
     ],
   },
   {
