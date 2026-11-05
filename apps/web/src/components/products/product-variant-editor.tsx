@@ -616,6 +616,7 @@ export function ProductVariantEditor({
   const dimensions = controlledDimensions ?? internalDimensions;
   const [bulkPrice, setBulkPrice] = useState(basePrice || "");
   const [bulkPurchasePrice, setBulkPurchasePrice] = useState(basePurchasePrice || "");
+  const [bulkStock, setBulkStock] = useState("");
   const [bulkTouched, setBulkTouched] = useState(false);
 
   const setRows = useCallback(
@@ -852,6 +853,16 @@ export function ProductVariantEditor({
     toast.success("Applied to all enabled variants");
   };
 
+  const applyBulkStock = () => {
+    const value = Number(bulkStock);
+    if (!bulkStock.trim() || Number.isNaN(value) || value < 0) {
+      toast.error("Enter a valid stock quantity first");
+      return;
+    }
+    setRows((prev) => prev.map((r) => (r.status === "draft" ? r : { ...r, stock: Math.floor(value) })));
+    toast.success("Stock applied to all enabled variants");
+  };
+
   const rowInheritedImage = (row: VariantMatrixRow) => inheritedRowImage(dimensions, row.dimensions);
 
   /** For a grouped (tree) row, show only the child-specific part of the label, e.g. "20" instead of "Red / 20". */
@@ -955,6 +966,19 @@ export function ProductVariantEditor({
                   />
                 </Field>
                 <Button type="button" size="sm" variant="outline" className="h-7 rounded-none px-2" onClick={applyBulkPricing}>
+                  Apply
+                </Button>
+                <Field label="Stock for all">
+                  <Input
+                    type="number"
+                    min={0}
+                    value={bulkStock}
+                    onChange={(e) => setBulkStock(e.target.value)}
+                    placeholder="0"
+                    className="h-7 w-24 rounded-none"
+                  />
+                </Field>
+                <Button type="button" size="sm" variant="outline" className="h-7 rounded-none px-2" onClick={applyBulkStock}>
                   Apply
                 </Button>
                 <p className="pb-1.5 text-[10px] text-muted-foreground">Applies to enabled variants only</p>
@@ -1066,6 +1090,15 @@ export function ProductVariantEditor({
                                     onChange={(e) => updateRow(row.id, { price: Number(e.target.value) || 0 })}
                                   />
                                 </Field>
+                                <Field label="Stock">
+                                  <Input
+                                    className="h-8"
+                                    type="number"
+                                    min={0}
+                                    value={row.stock}
+                                    onChange={(e) => updateRow(row.id, { stock: Math.max(0, Math.floor(Number(e.target.value) || 0)) })}
+                                  />
+                                </Field>
                               </div>
                             </div>
                           </div>
@@ -1086,6 +1119,7 @@ export function ProductVariantEditor({
                       <th className="px-3 py-2">Purchase price</th>
                       <th className="px-3 py-2">Margin (%)</th>
                       <th className="px-3 py-2">Sales Price</th>
+                      <th className="px-3 py-2">Stock</th>
                       <th className="w-16 px-3 py-2">Enabled</th>
                       <th className="w-16 px-3 py-2">Default</th>
                     </tr>
@@ -1098,7 +1132,7 @@ export function ProductVariantEditor({
                           {isTree && (
                             <tr className="border-t border-input bg-muted/40">
                               <td
-                                colSpan={galleryMedia.length > 0 ? 8 : 7}
+                                colSpan={galleryMedia.length > 0 ? 9 : 8}
                                 className="px-3 py-1.5 text-xs font-medium"
                               >
                                 <div className="flex items-center gap-2">
@@ -1182,6 +1216,15 @@ export function ProductVariantEditor({
                                     type="number"
                                     value={row.price}
                                     onChange={(e) => updateRow(row.id, { price: Number(e.target.value) || 0 })}
+                                  />
+                                </td>
+                                <td className="px-3 py-2">
+                                  <Input
+                                    className="h-7 w-20 rounded-none"
+                                    type="number"
+                                    min={0}
+                                    value={row.stock}
+                                    onChange={(e) => updateRow(row.id, { stock: Math.max(0, Math.floor(Number(e.target.value) || 0)) })}
                                   />
                                 </td>
                                 <td className="px-3 py-2 text-center">

@@ -473,6 +473,8 @@ export function ProductForm({
   const [saving, setSaving] = useState(false);
   const contentRef = useRef<HTMLDivElement>(null);
   const [section, setSection] = useState<SectionId>("media");
+  // A product that has variants opens on its Variants tab.
+  const openOnVariants = useRef(false);
   const [autosave, setAutosave] = useState("All changes saved");
   const [productMedia, setProductMedia] = useState<MediaLibraryItem[]>([]);
   const [variantRows, setVariantRows] = useState<VariantMatrixRow[]>([]);
@@ -655,7 +657,13 @@ export function ProductForm({
       ) {
         active.blur();
       }
-      container.scrollTo({ top: 0, behavior: "instant" as ScrollBehavior });
+      const variantsEl = openOnVariants.current ? container.querySelector<HTMLElement>('[data-section="variants"]') : null;
+      if (variantsEl) {
+        const top = container.scrollTop + variantsEl.getBoundingClientRect().top - container.getBoundingClientRect().top - 8;
+        container.scrollTo({ top, behavior: "instant" as ScrollBehavior });
+      } else {
+        container.scrollTo({ top: 0, behavior: "instant" as ScrollBehavior });
+      }
     };
     const t1 = setTimeout(scroll, 150);
     const t2 = setTimeout(scroll, 500);
@@ -747,6 +755,11 @@ export function ProductForm({
     setOriginOptions(buildOriginOptions(productDetail.origin?.trim() || ""));
     const loadedRows = variantsToRows(productDetail.variants);
     setVariantRows(loadedRows);
+    if (loadedRows.some((r) => Object.keys(r.dimensions).length > 0)) {
+      openOnVariants.current = true;
+      // the editors above autofocus and scroll to the top while they mount: go to Variants after that
+      setTimeout(() => selectSection("variants"), 400);
+    }
     setVariantAttributes(() => {
       if (!productDetail.variantAttributesJson) return [];
       try {
