@@ -52,6 +52,9 @@ class VariantUpsert(BaseModel):
     is_default: bool = False
     sort_order: int = 0
     image_id: Optional[str] = None
+    # The variant's own gallery (images and videos, JSON list). Left out of a save = left as it is.
+    image_url: Optional[str] = None
+    gallery_json: Optional[str] = None
     options_json: Optional[str] = None
 
 

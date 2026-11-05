@@ -19,7 +19,7 @@ import {
 import { toast } from "sonner";
 import { importCatalogImagesFromUrls } from "@/lib/catalog/import-catalog-images";
 import type { Product, ProductStatus, ProductVisibility } from "@/lib/mock-data/products";
-import { getPresetDimensions, type VariantDimension, type VariantMatrixRow } from "@/lib/mock-data/variants";
+import { getPresetDimensions, hydrateDimensionGalleries, type VariantDimension, type VariantMatrixRow } from "@/lib/mock-data/variants";
 import {
   createCatalogProduct,
   checkCatalogProductSlug,
@@ -74,6 +74,7 @@ import { RichTextEditor } from "@/components/products/rich-text-editor";
 import { AgaincartClassicEditor } from "@/components/products/againcart-classic-editor";
 import { MediaLibraryModal } from "@/components/media/media-library-modal";
 import type { MediaLibraryItem } from "@/lib/mock-data/media-library";
+import { extractYouTubeId } from "@/lib/mock-data/media-library";
 import { ProductSpecEditor } from "@/components/specifications/product-spec-editor";
 import { plainTextToListHtml, plainTextToParagraphHtml } from "@/lib/editor/plain-text-html";
 import { ProductVariantEditor } from "@/components/products/product-variant-editor";
@@ -261,6 +262,41 @@ function parseVariantOptions(raw?: string | null): Record<string, string> {
   }
 }
 
+function parseVariantGallery(
+  raw?: string | null,
+  fallbackId?: string | null,
+  fallbackUrl?: string | null,
+): { id: string; url: string }[] {
+  if (raw) {
+    try {
+      const parsed = JSON.parse(raw) as unknown;
+      if (Array.isArray(parsed)) {
+        const items = parsed
+          .map((item) => {
+            if (typeof item === "string" && item.trim()) {
+              return { id: item.trim(), url: item.trim() };
+            }
+            if (item && typeof item === "object") {
+              const row = item as Record<string, unknown>;
+              const id = String(row.id || row.media_id || "").trim();
+              const url = String(row.url || "").trim();
+              if (id || url) return { id: id || url, url: url || id };
+            }
+            return null;
+          })
+          .filter((item): item is { id: string; url: string } => Boolean(item));
+        if (items.length) return items;
+      }
+    } catch {
+      /* use fallback */
+    }
+  }
+  if (fallbackId || fallbackUrl) {
+    return [{ id: fallbackId || "", url: fallbackUrl || "" }];
+  }
+  return [];
+}
+
 function variantsToRows(
   variants: {
     id: string;
@@ -272,6 +308,7 @@ function variantsToRows(
     is_default: boolean;
     image_id?: string | null;
     image_url?: string | null;
+    gallery_json?: string | null;
     options_json?: string | null;
   }[],
 ): VariantMatrixRow[] {
@@ -285,12 +322,37 @@ function variantsToRows(
     dimensions: parseVariantOptions(v.options_json),
     imageId: v.image_id ?? undefined,
     imageUrl: v.image_url ?? undefined,
+    gallery: parseVariantGallery(v.gallery_json, v.image_id, v.image_url),
     status: v.status === "draft" ? "draft" : "published",
   }));
 }
 
+function isPersistedMediaId(id?: string | null): boolean {
+  if (!id) return false;
+  const value = id.trim();
+  if (!value) return false;
+  if (value.startsWith("hotlink-")) return false;
+  if (value.startsWith("http://") || value.startsWith("https://") || value.startsWith("/")) return false;
+  return true;
+}
+
+function isVariantVideoUrl(url?: string | null): boolean {
+  if (!url) return false;
+  if (extractYouTubeId(url)) return true;
+  return /(\.mp4|\.webm|\.mov|\.m4v|\.ogv)(\?|#|$)/i.test(url);
+}
+
 function rowsToVariantUpserts(rows: VariantMatrixRow[]): VariantUpsertInput[] {
-  return rows.map((row, idx) => ({
+  return rows.map((row, idx) => {
+    // The variant's own gallery (images and videos); the first picture is its cover.
+    const gallery = row.gallery?.length
+      ? row.gallery
+      : row.imageId || row.imageUrl
+        ? [{ id: row.imageId || "", url: row.imageUrl || "" }]
+        : [];
+    const cover = gallery.find((item) => !isVariantVideoUrl(item.url)) ?? gallery[0];
+    const candidateImageId = cover?.id || row.imageId || null;
+    return {
     id: row.id.startsWith("new_") ? undefined : row.id,
     sku: truncateToLimit(row.sku.trim(), PRODUCT_FIELD_LIMITS.variantSku),
     name: truncateToLimit(row.label.trim(), PRODUCT_FIELD_LIMITS.variantName),
@@ -299,9 +361,12 @@ function rowsToVariantUpserts(rows: VariantMatrixRow[]): VariantUpsertInput[] {
     status: (row.status === "draft" ? "draft" : "published") as ProductStatus,
     is_default: row.isDefault,
     sort_order: idx,
-    image_id: row.imageId ?? null,
+    image_id: isPersistedMediaId(candidateImageId) ? candidateImageId : null,
+    image_url: cover?.url || row.imageUrl || null,
+    gallery_json: gallery.length ? JSON.stringify(gallery) : null,
     options_json: Object.keys(row.dimensions).length ? JSON.stringify(row.dimensions) : null,
-  }));
+    };
+  });
 }
 
 function buildProductPayload(
@@ -680,12 +745,14 @@ export function ProductForm({
     // switching Manage Stock off again brings back the hand-set status the product had
     lastManualStockStatus.current = (productDetail.stockStatus ?? "") as ProductFormValues["stockStatus"];
     setOriginOptions(buildOriginOptions(productDetail.origin?.trim() || ""));
-    setVariantRows(variantsToRows(productDetail.variants));
+    const loadedRows = variantsToRows(productDetail.variants);
+    setVariantRows(loadedRows);
     setVariantAttributes(() => {
       if (!productDetail.variantAttributesJson) return [];
       try {
         const parsed = JSON.parse(productDetail.variantAttributesJson) as unknown;
-        return Array.isArray(parsed) ? (parsed as VariantDimension[]) : [];
+        const dims = Array.isArray(parsed) ? (parsed as VariantDimension[]) : [];
+        return hydrateDimensionGalleries(dims, loadedRows);
       } catch {
         return [];
       }
@@ -1437,7 +1504,7 @@ export function ProductForm({
                 onRowsChange={setVariantRows}
                 dimensions={variantAttributes}
                 onDimensionsChange={setVariantAttributes}
-                galleryMedia={productMedia.filter((m) => m.type === "image")}
+                galleryMedia={productMedia.filter((m) => m.type === "image" || m.type === "video")}
               />
             ) : (
               <DigitalFilesSection

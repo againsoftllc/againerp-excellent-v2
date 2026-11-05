@@ -1,9 +1,13 @@
 import { demoVariants, products, type Product, type ProductVariant } from "./products";
 
+export type VariantGalleryItem = { id: string; url: string };
+
 export type VariantDimensionValue = {
   value: string;
   imageId?: string;
   imageUrl?: string;
+  /** Gallery shots (images and videos) for this value: the shop shows these when the option is picked. */
+  gallery?: VariantGalleryItem[];
   /** Values scoped to this specific attribute value only, e.g. the sizes Red actually comes in (tree/parent-child, not a flat cartesian layer). */
   subValues?: string[];
 };
@@ -28,6 +32,8 @@ export type VariantMatrixRow = {
   isDefault?: boolean;
   imageId?: string;
   imageUrl?: string;
+  /** Gallery shots (images and videos) assigned to this variant: the shop shows them when it is picked. */
+  gallery?: VariantGalleryItem[];
   /** "draft" = disabled/paused combo (kept, not deleted); "published" = sellable. */
   status?: "draft" | "published";
 };
@@ -162,18 +168,48 @@ export function findDimensionValueImage(
   dimensions: VariantDimension[],
   dimensionName: string,
   value: string,
-): { imageId?: string; imageUrl?: string } | undefined {
+): { imageId?: string; imageUrl?: string; gallery?: VariantGalleryItem[] } | undefined {
   const dim = dimensions.find((d) => d.name === dimensionName);
   const found = dim?.values.find((v) => v.value === value);
-  if (!found || (!found.imageId && !found.imageUrl)) return undefined;
-  return { imageId: found.imageId, imageUrl: found.imageUrl };
+  if (!found || (!found.imageId && !found.imageUrl && !found.gallery?.length)) return undefined;
+  return { imageId: found.imageId, imageUrl: found.imageUrl, gallery: found.gallery };
+}
+
+/** Copy per-variant galleries up onto the attribute values (Color ...) that have none yet. */
+export function hydrateDimensionGalleries(
+  dimensions: VariantDimension[],
+  rows: VariantMatrixRow[],
+): VariantDimension[] {
+  if (!dimensions.length || !rows.length) return dimensions;
+  return dimensions.map((dim) => ({
+    ...dim,
+    values: dim.values.map((value) => {
+      if (value.gallery?.length) return value;
+      const row = rows.find(
+        (r) => r.dimensions[dim.name] === value.value && (r.gallery?.length || r.imageId || r.imageUrl),
+      );
+      if (!row) return value;
+      const gallery = row.gallery?.length
+        ? row.gallery
+        : row.imageId || row.imageUrl
+          ? [{ id: row.imageId || "", url: row.imageUrl || "" }]
+          : [];
+      if (!gallery.length) return value;
+      return {
+        ...value,
+        gallery,
+        imageId: gallery[0]?.id || value.imageId,
+        imageUrl: gallery[0]?.url || value.imageUrl,
+      };
+    }),
+  }));
 }
 
 /** Inherited image for a combo — from the first dimension's matching value (Alibaba/1688 convention). */
 export function inheritedRowImage(
   dimensions: VariantDimension[],
   rowDimensions: Record<string, string>,
-): { imageId?: string; imageUrl?: string } | undefined {
+): { imageId?: string; imageUrl?: string; gallery?: VariantGalleryItem[] } | undefined {
   const primary = dimensions[0];
   if (!primary) return undefined;
   const value = rowDimensions[primary.name];
@@ -234,6 +270,7 @@ export function mergeGeneratedRows(
       status: "published" as const,
       imageId: inherited?.imageId,
       imageUrl: inherited?.imageUrl,
+      gallery: inherited?.gallery,
     };
   });
 

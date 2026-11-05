@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 import uuid
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
@@ -30,7 +31,7 @@ from app.models.catalog_product_special import (
     CatalogProductSpecial,
     resolve_active_special,
 )
-from app.services.ecommerce.ecommerce_item_service import stock_status_flags
+from app.services.ecommerce.ecommerce_item_service import _resolve_storefront_in_stock, stock_status_flags
 from app.models.catalog_product_attribute_value import CatalogProductAttributeValue
 from app.models.catalog_product_review import CatalogProductReview
 from app.models.catalog_product_qa import CatalogProductQa
@@ -782,6 +783,9 @@ def _parse_variant_gallery(db: Session, row: CatalogProductVariant) -> list[str]
     return out
 
 
+_VIDEO_FILE_RE = re.compile(r"\.(mp4|webm|mov|m4v|ogv)(\?|#|$)", re.IGNORECASE)
+
+
 def _parse_variant_video_urls(db: Session, row: CatalogProductVariant) -> list[str]:
     """Video entries embedded in this variant's own gallery_json (the
     counterpart `_parse_variant_gallery` strips out of the photo list) — a
@@ -796,6 +800,7 @@ def _parse_variant_video_urls(db: Session, row: CatalogProductVariant) -> list[s
         if isinstance(data, list):
             for item in data:
                 url = None
+                uploaded_video = False
                 if isinstance(item, str):
                     url = item.strip()
                 elif isinstance(item, dict):
@@ -805,12 +810,17 @@ def _parse_variant_video_urls(db: Session, row: CatalogProductVariant) -> list[s
                         media = db.get(Media, media_id)
                         if media and media.media_type and media.media_type != "video":
                             continue
+                        uploaded_video = bool(media and media.media_type == "video")
                 if not url:
                     continue
                 youtube_id = _youtube_id(url)
-                if not youtube_id:
+                if youtube_id:
+                    playable = f"https://www.youtube.com/watch?v={youtube_id}"
+                elif uploaded_video or _VIDEO_FILE_RE.search(url):
+                    # an uploaded / direct video file plays as it is
+                    playable = _public_media_url(url)
+                else:
                     continue
-                playable = f"https://www.youtube.com/watch?v={youtube_id}"
                 if playable not in urls:
                     urls.append(playable)
     return urls
@@ -1017,6 +1027,8 @@ def _load_variants(
     catalog_product_id: Optional[str],
     *,
     weight_by_sku: Optional[dict[str, float]] = None,
+    track_quantity: Optional[bool] = None,
+    stock_status: Optional[str] = None,
 ) -> list[StorefrontVariantRead]:
     if not catalog_product_id:
         return []
@@ -1059,6 +1071,13 @@ def _load_variants(
                 gallery=_parse_variant_gallery(db, row),
                 video_urls=_parse_variant_video_urls(db, row),
                 is_default=bool(row.is_default),
+                in_stock=(
+                    None
+                    if track_quantity is None
+                    else _resolve_storefront_in_stock(
+                        stock=int(row.stock or 0), track_quantity=track_quantity, stock_status=stock_status
+                    )
+                ),
                 options=options,
                 weight_kg=weight_kg,
             )
@@ -1332,7 +1351,13 @@ def _detail_from_ec(view, ec: EcommerceItem, db: Session) -> StorefrontProductDe
         seller_info,
     )
     weight_kg, weight_by_sku = _load_shipping_meta(db, ec.catalog_product_id)
-    variants = _load_variants(db, ec.catalog_product_id, weight_by_sku=weight_by_sku)
+    variants = _load_variants(
+        db,
+        ec.catalog_product_id,
+        weight_by_sku=weight_by_sku,
+        track_quantity=bool(view.track_quantity),
+        stock_status=view.stock_status,
+    )
     specifications = _filter_specs_for_variants(
         _load_specifications(db, ec.catalog_product_id),
         variants,

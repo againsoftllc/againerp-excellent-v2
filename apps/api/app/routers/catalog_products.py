@@ -456,6 +456,7 @@ def _variant_brief(variant: CatalogProductVariant, db: Optional[Session] = None)
         sort_order=variant.sort_order,
         image_id=variant.image_id,
         image_url=image_url,
+        gallery_json=getattr(variant, "gallery_json", None),
         options_json=getattr(variant, "options_json", None),
         external_sku_id=getattr(variant, "external_sku_id", None),
     )
@@ -630,6 +631,8 @@ def _replace_variants(
                 is_default=item.is_default,
                 sort_order=item.sort_order if item.sort_order else idx,
                 image_id=image_id,
+                image_url=item.image_url,
+                gallery_json=item.gallery_json,
                 options_json=item.options_json,
             )
             db.add(row)
@@ -643,6 +646,11 @@ def _replace_variants(
         row.purchase_price = item.purchase_price
         row.stock = item.stock
         row.image_id = image_id
+        # A client that does not know about the variant gallery must not wipe it.
+        if "image_url" in item.model_fields_set:
+            row.image_url = item.image_url
+        if "gallery_json" in item.model_fields_set:
+            row.gallery_json = item.gallery_json
         row.status = item.status
         row.is_default = item.is_default
         row.sort_order = item.sort_order if item.sort_order else idx

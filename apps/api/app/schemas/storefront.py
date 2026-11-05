@@ -129,6 +129,8 @@ class StorefrontVariantRead(BaseModel):
     gallery: List[str] = Field(default_factory=list)
     video_urls: List[str] = Field(default_factory=list)
     is_default: bool = False
+    # Sellable by the shop's stock rules (a product that does not manage stock sells at stock 0 too).
+    in_stock: Optional[bool] = None
     options: List[StorefrontVariantOptionRead] = Field(default_factory=list)
     weight_kg: Optional[float] = None
 

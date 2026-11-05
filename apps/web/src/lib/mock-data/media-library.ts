@@ -231,7 +231,7 @@ function isHttpUrl(value: string) {
   }
 }
 
-function extractYouTubeId(url: string) {
+export function extractYouTubeId(url: string) {
   try {
     const parsed = new URL(url);
     if (parsed.hostname.includes("youtu.be")) {

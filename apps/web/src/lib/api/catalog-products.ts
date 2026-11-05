@@ -87,6 +87,7 @@ export type ApiProductVariant = {
   sort_order: number;
   image_id: string | null;
   image_url: string | null;
+  gallery_json?: string | null;
   options_json?: string | null;
   external_sku_id?: string | null;
 };
@@ -460,6 +461,8 @@ export type VariantUpsertInput = {
   is_default?: boolean;
   sort_order?: number;
   image_id?: string | null;
+  image_url?: string | null;
+  gallery_json?: string | null;
   options_json?: string | null;
 };
 
@@ -565,6 +568,8 @@ export async function replaceProductVariants(
         is_default: v.is_default ?? false,
         sort_order: v.sort_order ?? idx,
         image_id: v.image_id ?? null,
+        image_url: v.image_url ?? null,
+        gallery_json: v.gallery_json ?? null,
         options_json: v.options_json ?? null,
       })),
     }),

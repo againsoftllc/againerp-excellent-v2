@@ -14,6 +14,7 @@ import {
   type VariantMatrixRow,
 } from "@/lib/mock-data/variants";
 import type { MediaLibraryItem } from "@/lib/mock-data/media-library";
+import { extractYouTubeId } from "@/lib/mock-data/media-library";
 import { marginFromSelling, sellingFromMargin } from "@/lib/pricing/margin";
 import { cn, formatCurrency } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
@@ -52,26 +53,129 @@ function Field({
   );
 }
 
+function isPlayableVideoUrl(url: string): boolean {
+  if (extractYouTubeId(url)) return true;
+  return /(\.mp4|\.webm|\.mov|\.m4v|\.ogv)(\?|#|$)/i.test(url);
+}
+
+function videoThumbUrl(url: string): string {
+  const youtubeId = extractYouTubeId(url);
+  if (youtubeId) return `https://img.youtube.com/vi/${youtubeId}/hqdefault.jpg`;
+  return url;
+}
+
+function variantGalleryPersistUrl(item: MediaLibraryItem): string {
+  if (item.type === "video") {
+    for (const candidate of [item.sourceUrl, item.url]) {
+      if (!candidate) continue;
+      const youtubeId = extractYouTubeId(candidate);
+      if (youtubeId) return `https://www.youtube.com/watch?v=${youtubeId}`;
+      if (/img\.youtube\.com/i.test(candidate)) continue;
+      if (/^https?:\/\//i.test(candidate) || candidate.startsWith("/uploads/")) return candidate;
+    }
+  }
+  return item.url;
+}
+
+type GalleryPickItem = { id: string; url: string; kind: "image" | "video"; thumb: string };
+
 function VariantImagePicker({
   value,
+  values,
+  selectedItems,
   inheritedId,
   onChange,
+  onChangeMany,
   gallery,
   size = "md",
+  multiple = false,
 }: {
   value?: string;
+  values?: string[];
+  /** Current gallery rows (ids+urls) so selected videos stay visible even if not in product media. */
+  selectedItems?: { id: string; url: string }[];
   /** Fallback preview shown (dashed ring) when no explicit value is set — e.g. the Color swatch image. */
   inheritedId?: string;
   onChange: (id: string | undefined, url: string | undefined) => void;
+  onChangeMany?: (items: { id: string; url: string }[]) => void;
   gallery: MediaLibraryItem[];
   size?: "sm" | "md";
+  multiple?: boolean;
 }) {
   const [open, setOpen] = useState(false);
   const [rect, setRect] = useState<{ top: number; left: number } | null>(null);
+  const [videoDraft, setVideoDraft] = useState("");
   const btnRef = useRef<HTMLButtonElement>(null);
   const popoverRef = useRef<HTMLDivElement>(null);
-  const isInherited = !value && !!inheritedId;
-  const selected = gallery.find((m) => m.id === (value ?? inheritedId));
+  const extrasRef = useRef<Map<string, { id: string; url: string }>>(new Map());
+
+  const mediaGallery = gallery.filter((item) => item.type === "image" || item.type === "video");
+  const propSelectedIds = multiple
+    ? (values?.length ? values : value ? [value] : [])
+    : (value ? [value] : []);
+  const [draftIds, setDraftIds] = useState<string[]>(propSelectedIds);
+  const propKey = propSelectedIds.join("|");
+  useEffect(() => {
+    setDraftIds(propSelectedIds);
+    for (const item of selectedItems ?? []) {
+      if (item.id && item.url) extrasRef.current.set(item.id, item);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- sync when parent selection string changes
+  }, [propKey]);
+
+  const selectedIds = multiple ? draftIds : propSelectedIds;
+  const isInherited = selectedIds.length === 0 && !!inheritedId;
+  const previewId = selectedIds[0] ?? inheritedId;
+
+  const resolveItem = useCallback(
+    (id: string): GalleryPickItem | null => {
+      const media = mediaGallery.find((m) => m.id === id);
+      if (media) {
+        const url = variantGalleryPersistUrl(media);
+        const kind = media.type === "video" || isPlayableVideoUrl(url) ? "video" : "image";
+        return { id, url, kind, thumb: kind === "video" ? videoThumbUrl(url) : media.url };
+      }
+      const fromSelected = (selectedItems ?? []).find((item) => item.id === id);
+      const fromExtra = extrasRef.current.get(id);
+      const hit = fromSelected || fromExtra;
+      if (!hit?.url) return null;
+      const kind = isPlayableVideoUrl(hit.url) ? "video" : "image";
+      return { id: hit.id, url: hit.url, kind, thumb: kind === "video" ? videoThumbUrl(hit.url) : hit.url };
+    },
+    [mediaGallery, selectedItems],
+  );
+
+  const selected = previewId ? resolveItem(previewId) : null;
+
+  const pickerItems = useMemo(() => {
+    const map = new Map<string, GalleryPickItem>();
+    for (const media of mediaGallery) {
+      const url = variantGalleryPersistUrl(media);
+      const kind = media.type === "video" || isPlayableVideoUrl(url) ? "video" : "image";
+      map.set(media.id, {
+        id: media.id,
+        url,
+        kind,
+        thumb: kind === "video" ? videoThumbUrl(url) : media.url,
+      });
+    }
+    for (const item of selectedItems ?? []) {
+      if (!item.id || map.has(item.id)) continue;
+      const kind = isPlayableVideoUrl(item.url) ? "video" : "image";
+      map.set(item.id, {
+        id: item.id,
+        url: item.url,
+        kind,
+        thumb: kind === "video" ? videoThumbUrl(item.url) : item.url,
+      });
+    }
+    for (const id of selectedIds) {
+      if (map.has(id)) continue;
+      const resolved = resolveItem(id);
+      if (resolved) map.set(id, resolved);
+    }
+    return Array.from(map.values());
+  }, [mediaGallery, selectedItems, selectedIds, resolveItem]);
 
   useEffect(() => {
     const handler = (e: MouseEvent) => {
@@ -84,15 +188,51 @@ function VariantImagePicker({
     return () => document.removeEventListener("mousedown", handler);
   }, []);
 
-  if (gallery.length === 0) return null;
-
   const handleOpen = () => {
     if (!open && btnRef.current) {
       const r = btnRef.current.getBoundingClientRect();
-      if (r.width === 0) return; // button is hidden (e.g. inside md:hidden mobile card)
+      if (r.width === 0) return;
       setRect({ top: r.bottom + 6, left: r.left });
+      setDraftIds(propSelectedIds);
+      setVideoDraft("");
     }
     setOpen((v) => !v);
+  };
+
+  const emitMany = (ids: string[]) => {
+    setDraftIds(ids);
+    const items = ids
+      .map((id) => resolveItem(id))
+      .filter((item): item is GalleryPickItem => Boolean(item))
+      .map((item) => ({ id: item.id, url: item.url }));
+    if (onChangeMany) onChangeMany(items);
+    else onChange(items[0]?.id, items[0]?.url);
+  };
+
+  const addVideoFromDraft = () => {
+    const raw = videoDraft.trim();
+    if (!raw) {
+      toast.error("Paste a YouTube or video URL");
+      return;
+    }
+    if (!isPlayableVideoUrl(raw) && !/^https?:\/\//i.test(raw)) {
+      toast.error("Enter a valid YouTube or video URL");
+      return;
+    }
+    const youtubeId = extractYouTubeId(raw);
+    const url = youtubeId ? `https://www.youtube.com/watch?v=${youtubeId}` : raw;
+    const id = youtubeId ? `variant-yt-${youtubeId}` : `variant-vid-${Date.now()}`;
+    extrasRef.current.set(id, { id, url });
+    if (!multiple) {
+      onChange(id, url);
+      setVideoDraft("");
+      setOpen(false);
+      return;
+    }
+    const next = selectedIds.includes(id) ? selectedIds : [...selectedIds, id];
+    emitMany(next);
+    setVideoDraft("");
+    toast.success("Video added for this color");
   };
 
   const boxSize = size === "sm" ? "h-6 w-6" : "h-8 w-8";
@@ -104,28 +244,46 @@ function VariantImagePicker({
         type="button"
         onClick={handleOpen}
         className={cn(
-          "flex items-center justify-center overflow-hidden rounded-none border bg-muted hover:border-primary/60",
+          "relative flex items-center justify-center overflow-hidden rounded-none border bg-muted hover:border-primary/60",
           boxSize,
           isInherited ? "border-dashed border-muted-foreground/50" : "border-input",
         )}
-        title={isInherited ? "Inherited image — click to override" : "Pick variant image"}
+        title={
+          multiple
+            ? "Select images and/or video for this variant"
+            : isInherited
+              ? "Inherited image — click to override"
+              : "Pick variant image or video"
+        }
       >
         {selected ? (
-          <img
-            src={selected.url}
-            alt={selected.name}
-            className={cn("h-full w-full object-cover", isInherited && "opacity-70")}
-          />
+          <>
+            <img
+              src={selected.thumb}
+              alt=""
+              className={cn("h-full w-full object-cover", isInherited && "opacity-70")}
+            />
+            {selected.kind === "video" ? (
+              <span className="absolute inset-0 flex items-center justify-center bg-black/35">
+                <span className="text-[9px] font-bold text-white">▶</span>
+              </span>
+            ) : null}
+          </>
         ) : (
           <Image className="h-4 w-4 text-muted-foreground" />
         )}
+        {multiple && selectedIds.length > 1 && (
+          <span className="absolute bottom-0 right-0 bg-primary px-0.5 text-[9px] leading-3 text-primary-foreground">
+            {selectedIds.length}
+          </span>
+        )}
       </button>
-      {value && (
+      {selectedIds.length > 0 && (
         <button
           type="button"
-          onClick={() => onChange(undefined, undefined)}
+          onClick={() => (multiple ? emitMany([]) : onChange(undefined, undefined))}
           className="absolute -right-1.5 -top-1.5 flex h-3.5 w-3.5 items-center justify-center rounded-none bg-destructive text-white"
-          title="Clear (use inherited image)"
+          title="Clear gallery"
         >
           <X className="h-2.5 w-2.5" />
         </button>
@@ -133,19 +291,117 @@ function VariantImagePicker({
       {open && rect && (
         <div
           ref={popoverRef}
-          style={{ position: "fixed", top: rect.top, left: rect.left, zIndex: 9999, maxWidth: 224, display: "flex", flexWrap: "wrap", gap: 6, border: "1px solid hsl(var(--border))", background: "hsl(var(--popover))", padding: 8, boxShadow: "0 4px 16px rgba(0,0,0,0.25)" }}
+          className="fixed z-[9999] w-[320px] border border-border bg-popover p-2 shadow-lg"
+          style={{
+            top: rect.top,
+            left: Math.min(rect.left, window.innerWidth - 336),
+          }}
         >
-          {gallery.map((item) => (
-            <button
-              key={item.id}
-              type="button"
-              onClick={() => { onChange(item.id, item.url); setOpen(false); }}
-              className={`h-12 w-12 shrink-0 overflow-hidden rounded-none border-2 transition ${value === item.id ? "border-primary" : "border-transparent hover:border-muted-foreground/40"}`}
-              title={item.name}
-            >
-              <img src={item.url} alt={item.name} className="h-full w-full object-cover" />
-            </button>
-          ))}
+          <div className="mb-2 flex items-center justify-between gap-2 px-0.5">
+            <p className="text-[11px] font-medium text-foreground">
+              {multiple ? "Tick images & video for this color" : "Pick image or video"}
+            </p>
+            {multiple ? (
+              <p className="text-[10px] text-muted-foreground">{selectedIds.length} selected</p>
+            ) : null}
+          </div>
+          {pickerItems.length > 0 ? (
+            <div className="grid max-h-[220px] grid-cols-3 content-start gap-2 overflow-y-auto">
+              {pickerItems.map((item) => {
+                const picked = selectedIds.includes(item.id);
+                return (
+                  <button
+                    key={item.id}
+                    type="button"
+                    onClick={() => {
+                      if (!multiple) {
+                        onChange(item.id, item.url);
+                        setOpen(false);
+                        return;
+                      }
+                      emitMany(
+                        picked
+                          ? selectedIds.filter((id) => id !== item.id)
+                          : [...selectedIds, item.id],
+                      );
+                    }}
+                    className={cn(
+                      "group relative overflow-hidden border bg-card transition",
+                      picked
+                        ? "border-primary ring-1 ring-primary"
+                        : "border-border hover:border-foreground/40",
+                    )}
+                    title={item.kind === "video" ? "Video" : "Image"}
+                  >
+                    <div className="relative w-full overflow-hidden bg-muted">
+                      <div className="block w-full pt-[100%]" aria-hidden />
+                      <img
+                        src={item.thumb}
+                        alt=""
+                        className="absolute inset-0 h-full w-full object-cover"
+                      />
+                      {item.kind === "video" ? (
+                        <span className="absolute left-1 top-1 z-[2] bg-black/70 px-1 text-[9px] font-semibold uppercase text-white">
+                          Video
+                        </span>
+                      ) : null}
+                      <span
+                        className={cn(
+                          "absolute bottom-1 right-1 z-[2] flex h-5 w-5 items-center justify-center border-2 transition",
+                          picked
+                            ? "border-primary bg-primary text-primary-foreground"
+                            : "border-border bg-background",
+                        )}
+                      >
+                        {picked ? <Check className="h-3 w-3" /> : null}
+                      </span>
+                    </div>
+                  </button>
+                );
+              })}
+            </div>
+          ) : (
+            <p className="mb-2 text-[11px] text-muted-foreground">
+              No gallery media yet — paste a YouTube URL below, or add images in Gallery first.
+            </p>
+          )}
+          <div className="mt-2 space-y-1.5 border-t border-border pt-2">
+            <p className="text-[10px] font-medium text-muted-foreground">Add video for this color</p>
+            <div className="flex gap-1">
+              <Input
+                value={videoDraft}
+                onChange={(e) => setVideoDraft(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") {
+                    e.preventDefault();
+                    addVideoFromDraft();
+                  }
+                }}
+                placeholder="YouTube URL…"
+                className="h-7 min-w-0 flex-1 rounded-none text-xs"
+              />
+              <Button
+                type="button"
+                size="sm"
+                variant="secondary"
+                className="h-7 shrink-0 rounded-none px-2"
+                onClick={addVideoFromDraft}
+              >
+                Add
+              </Button>
+            </div>
+          </div>
+          {multiple && (
+            <div className="mt-2 flex justify-end">
+              <button
+                type="button"
+                onClick={() => setOpen(false)}
+                className="h-7 px-2 text-[11px] font-medium text-primary hover:underline"
+              >
+                Done
+              </button>
+            </div>
+          )}
         </div>
       )}
     </div>
@@ -223,6 +479,7 @@ function AttributeValuesEditor({
   onAddValue,
   onRemoveValue,
   onSetValueImage,
+  onSetValueGallery,
   onAddSubValue,
   onRemoveSubValue,
   onSetSubName,
@@ -232,6 +489,7 @@ function AttributeValuesEditor({
   onAddValue: (value: string) => void;
   onRemoveValue: (value: string) => void;
   onSetValueImage: (value: string, imageId: string | undefined, imageUrl: string | undefined) => void;
+  onSetValueGallery: (value: string, items: { id: string; url: string }[]) => void;
   onAddSubValue: (value: string, subValue: string) => void;
   onRemoveSubValue: (value: string, subValue: string) => void;
   onSetSubName: (name: string) => void;
@@ -263,10 +521,14 @@ function AttributeValuesEditor({
               )}
             >
               <VariantImagePicker
+                multiple
                 value={v.imageId}
+                values={(v.gallery?.length ? v.gallery : v.imageId ? [{ id: v.imageId, url: v.imageUrl ?? "" }] : []).map((g) => g.id)}
+                selectedItems={v.gallery?.length ? v.gallery : v.imageId ? [{ id: v.imageId, url: v.imageUrl ?? "" }] : []}
                 gallery={gallery}
                 size="sm"
                 onChange={(id, url) => onSetValueImage(v.value, id, url)}
+                onChangeMany={(items) => onSetValueGallery(v.value, items)}
               />
               <span>{v.value}</span>
               {subCount > 0 && (
@@ -469,6 +731,29 @@ export function ProductVariantEditor({
     );
   };
 
+  const setValueGallery = (dimId: string, value: string, items: { id: string; url: string }[]) => {
+    const dim = dimensions.find((d) => d.id === dimId);
+    const cover = items.find((item) => !isPlayableVideoUrl(item.url)) ?? items[0];
+    setDimensions((prev) =>
+      prev.map((d) =>
+        d.id === dimId
+          ? {
+              ...d,
+              values: d.values.map((v) =>
+                v.value === value ? { ...v, gallery: items, imageId: cover?.id, imageUrl: cover?.url } : v,
+              ),
+            }
+          : d,
+      ),
+    );
+    if (!dim?.name) return;
+    setRows((prev) =>
+      prev.map((row) =>
+        row.dimensions[dim.name] === value ? { ...row, gallery: items, imageId: cover?.id, imageUrl: cover?.url } : row,
+      ),
+    );
+  };
+
   const setDimensionSubName = (dimId: string, subName: string) => {
     setDimensions((prev) => prev.map((d) => (d.id === dimId ? { ...d, subName } : d)));
   };
@@ -625,6 +910,7 @@ export function ProductVariantEditor({
                   onAddValue={(value) => addValue(dim.id, value)}
                   onRemoveValue={(value) => removeValue(dim.id, value)}
                   onSetValueImage={(value, imageId, imageUrl) => setValueImage(dim.id, value, imageId, imageUrl)}
+                  onSetValueGallery={(value, items) => setValueGallery(dim.id, value, items)}
                   onAddSubValue={(value, subValue) => addSubValue(dim.id, value, subValue)}
                   onRemoveSubValue={(value, subValue) => removeSubValue(dim.id, value, subValue)}
                   onSetSubName={(name) => setDimensionSubName(dim.id, name)}
@@ -703,10 +989,17 @@ export function ProductVariantEditor({
                             <div className="mb-2 flex items-start justify-between gap-2">
                               <div className="flex items-center gap-2">
                                 <VariantImagePicker
+                                  multiple
                                   value={row.imageId}
+                                  values={(row.gallery?.length ? row.gallery : row.imageId ? [{ id: row.imageId, url: row.imageUrl ?? "" }] : []).map((g) => g.id)}
+                                  selectedItems={row.gallery?.length ? row.gallery : row.imageId ? [{ id: row.imageId, url: row.imageUrl ?? "" }] : []}
                                   inheritedId={inherited?.imageId}
                                   gallery={galleryMedia}
                                   onChange={(id, url) => updateRow(row.id, { imageId: id, imageUrl: url })}
+                                  onChangeMany={(items) => {
+                                    const cover = items.find((item) => !isPlayableVideoUrl(item.url)) ?? items[0];
+                                    updateRow(row.id, { imageId: cover?.id, imageUrl: cover?.url, gallery: items });
+                                  }}
                                 />
                                 <p className="text-sm font-medium">{isTree ? childLabel(row) : row.label}</p>
                               </div>
@@ -830,10 +1123,17 @@ export function ProductVariantEditor({
                                 {galleryMedia.length > 0 && (
                                   <td className="px-3 py-2">
                                     <VariantImagePicker
+                                      multiple
                                       value={row.imageId}
+                                      values={(row.gallery?.length ? row.gallery : row.imageId ? [{ id: row.imageId, url: row.imageUrl ?? "" }] : []).map((g) => g.id)}
+                                      selectedItems={row.gallery?.length ? row.gallery : row.imageId ? [{ id: row.imageId, url: row.imageUrl ?? "" }] : []}
                                       inheritedId={inherited?.imageId}
                                       gallery={galleryMedia}
                                       onChange={(id, url) => updateRow(row.id, { imageId: id, imageUrl: url })}
+                                      onChangeMany={(items) => {
+                                        const cover = items.find((item) => !isPlayableVideoUrl(item.url)) ?? items[0];
+                                        updateRow(row.id, { imageId: cover?.id, imageUrl: cover?.url, gallery: items });
+                                      }}
                                     />
                                   </td>
                                 )}

@@ -179,6 +179,7 @@ class ProductVariantBrief(BaseModel):
     sort_order: int
     image_id: Optional[str] = None
     image_url: Optional[str] = None
+    gallery_json: Optional[str] = None
     options_json: Optional[str] = None
     external_sku_id: Optional[str] = None
 
