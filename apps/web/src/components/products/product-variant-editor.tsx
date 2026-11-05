@@ -33,6 +33,8 @@ type Props = {
   dimensions?: VariantDimension[];
   onDimensionsChange?: (dimensions: VariantDimension[]) => void;
   galleryMedia?: MediaLibraryItem[];
+  /** The product manages stock: only then is a variant's quantity used, so only then it can be edited. */
+  manageStock?: boolean;
 };
 
 function Field({
@@ -607,6 +609,7 @@ export function ProductVariantEditor({
   dimensions: controlledDimensions,
   onDimensionsChange,
   galleryMedia = [],
+  manageStock = true,
 }: Props) {
   const [internalDimensions, setInternalDimensions] = useState<VariantDimension[]>(() =>
     controlledDimensions ?? getPresetDimensions(category),
@@ -968,20 +971,29 @@ export function ProductVariantEditor({
                 <Button type="button" size="sm" variant="outline" className="h-7 rounded-none px-2" onClick={applyBulkPricing}>
                   Apply
                 </Button>
-                <Field label="Stock for all">
-                  <Input
-                    type="number"
-                    min={0}
-                    value={bulkStock}
-                    onChange={(e) => setBulkStock(e.target.value)}
-                    placeholder="0"
-                    className="h-7 w-24 rounded-none"
-                  />
-                </Field>
-                <Button type="button" size="sm" variant="outline" className="h-7 rounded-none px-2" onClick={applyBulkStock}>
-                  Apply
-                </Button>
+                {manageStock && (
+                  <>
+                    <Field label="Stock for all">
+                      <Input
+                        type="number"
+                        min={0}
+                        value={bulkStock}
+                        onChange={(e) => setBulkStock(e.target.value)}
+                        placeholder="0"
+                        className="h-7 w-24 rounded-none"
+                      />
+                    </Field>
+                    <Button type="button" size="sm" variant="outline" className="h-7 rounded-none px-2" onClick={applyBulkStock}>
+                      Apply
+                    </Button>
+                  </>
+                )}
                 <p className="pb-1.5 text-[10px] text-muted-foreground">Applies to enabled variants only</p>
+                {!manageStock && (
+                  <p className="basis-full text-[11px] text-muted-foreground">
+                    Manage stock is off, so every variant is sellable. To set a quantity for each variant, turn on Manage stock in Pricing &amp; Inventory.
+                  </p>
+                )}
               </div>
 
               <div className="space-y-3 md:hidden">
@@ -1090,15 +1102,17 @@ export function ProductVariantEditor({
                                     onChange={(e) => updateRow(row.id, { price: Number(e.target.value) || 0 })}
                                   />
                                 </Field>
-                                <Field label="Stock">
-                                  <Input
-                                    className="h-8"
-                                    type="number"
-                                    min={0}
-                                    value={row.stock}
-                                    onChange={(e) => updateRow(row.id, { stock: Math.max(0, Math.floor(Number(e.target.value) || 0)) })}
-                                  />
-                                </Field>
+                                {manageStock && (
+                                  <Field label="Stock">
+                                    <Input
+                                      className="h-8"
+                                      type="number"
+                                      min={0}
+                                      value={row.stock}
+                                      onChange={(e) => updateRow(row.id, { stock: Math.max(0, Math.floor(Number(e.target.value) || 0)) })}
+                                    />
+                                  </Field>
+                                )}
                               </div>
                             </div>
                           </div>
@@ -1119,7 +1133,7 @@ export function ProductVariantEditor({
                       <th className="px-3 py-2">Purchase price</th>
                       <th className="px-3 py-2">Margin (%)</th>
                       <th className="px-3 py-2">Sales Price</th>
-                      <th className="px-3 py-2">Stock</th>
+                      {manageStock && <th className="px-3 py-2">Stock</th>}
                       <th className="w-16 px-3 py-2">Enabled</th>
                       <th className="w-16 px-3 py-2">Default</th>
                     </tr>
@@ -1132,7 +1146,7 @@ export function ProductVariantEditor({
                           {isTree && (
                             <tr className="border-t border-input bg-muted/40">
                               <td
-                                colSpan={galleryMedia.length > 0 ? 9 : 8}
+                                colSpan={(galleryMedia.length > 0 ? 9 : 8) - (manageStock ? 0 : 1)}
                                 className="px-3 py-1.5 text-xs font-medium"
                               >
                                 <div className="flex items-center gap-2">
@@ -1218,15 +1232,17 @@ export function ProductVariantEditor({
                                     onChange={(e) => updateRow(row.id, { price: Number(e.target.value) || 0 })}
                                   />
                                 </td>
-                                <td className="px-3 py-2">
-                                  <Input
-                                    className="h-7 w-20 rounded-none"
-                                    type="number"
-                                    min={0}
-                                    value={row.stock}
-                                    onChange={(e) => updateRow(row.id, { stock: Math.max(0, Math.floor(Number(e.target.value) || 0)) })}
-                                  />
-                                </td>
+                                {manageStock && (
+                                  <td className="px-3 py-2">
+                                    <Input
+                                      className="h-7 w-20 rounded-none"
+                                      type="number"
+                                      min={0}
+                                      value={row.stock}
+                                      onChange={(e) => updateRow(row.id, { stock: Math.max(0, Math.floor(Number(e.target.value) || 0)) })}
+                                    />
+                                  </td>
+                                )}
                                 <td className="px-3 py-2 text-center">
                                   <Button
                                     type="button"

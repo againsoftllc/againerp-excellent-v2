@@ -1509,6 +1509,7 @@ export function ProductForm({
                 dimensions={variantAttributes}
                 onDimensionsChange={setVariantAttributes}
                 galleryMedia={productMedia.filter((m) => m.type === "image" || m.type === "video")}
+                manageStock={values.trackQuantity}
               />
             ) : (
               <DigitalFilesSection
