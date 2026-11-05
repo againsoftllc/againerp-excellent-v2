@@ -1,7 +1,7 @@
 "use client";
 
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { ChevronDown, ChevronRight, Eye, EyeOff, Image, ListTree, Plus, RefreshCw, Star, Trash2, X } from "lucide-react";
+import { Check, ChevronDown, ChevronRight, Eye, EyeOff, Image, ListTree, Plus, RefreshCw, Star, Trash2, X } from "lucide-react";
 import { toast } from "sonner";
 import {
   buildVariantLabel,

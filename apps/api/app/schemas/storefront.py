@@ -128,6 +128,7 @@ class StorefrontVariantRead(BaseModel):
     image_url: Optional[str] = None
     gallery: List[str] = Field(default_factory=list)
     video_urls: List[str] = Field(default_factory=list)
+    video_first: bool = False
     is_default: bool = False
     # Sellable by the shop's stock rules (a product that does not manage stock sells at stock 0 too).
     in_stock: Optional[bool] = None
@@ -167,6 +168,8 @@ class StorefrontProductDetailRead(StorefrontProductRead):
     specifications: List[StorefrontSpecGroupRead] = Field(default_factory=list)
     gallery: List[str] = Field(default_factory=list)
     video_urls: List[str] = Field(default_factory=list)
+    # The admin put the video first in the gallery (the page then opens on it and plays it).
+    video_first: bool = False
     seller_info: Optional[StorefrontSellerInfoRead] = None
     source_url: Optional[str] = None
     variants: List[StorefrontVariantRead] = Field(default_factory=list)

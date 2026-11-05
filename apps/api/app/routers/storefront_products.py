@@ -786,6 +786,43 @@ def _parse_variant_gallery(db: Session, row: CatalogProductVariant) -> list[str]
 _VIDEO_FILE_RE = re.compile(r"\.(mp4|webm|mov|m4v|ogv)(\?|#|$)", re.IGNORECASE)
 
 
+def _variant_video_first(db: Session, row: CatalogProductVariant) -> bool:
+    """The first entry of the variant's own gallery is a video (the admin put it first)."""
+    raw = getattr(row, "gallery_json", None)
+    if not raw:
+        return False
+    try:
+        data = json.loads(raw)
+    except json.JSONDecodeError:
+        return False
+    if not isinstance(data, list) or not data:
+        return False
+    first = data[0]
+    url = first.strip() if isinstance(first, str) else str(first.get("url") or "").strip() if isinstance(first, dict) else ""
+    if not url:
+        return False
+    if isinstance(first, dict):
+        media_id = str(first.get("id") or "").strip()
+        media = db.get(Media, media_id) if media_id else None
+        if media and media.media_type:
+            return media.media_type == "video"
+    return bool(_youtube_id(url) or _VIDEO_FILE_RE.search(url))
+
+
+def _product_video_first(db: Session, catalog_product_id: Optional[str]) -> bool:
+    """The product's first gallery item (by the admin's order) is a video."""
+    if not catalog_product_id:
+        return False
+    media = (
+        db.query(Media)
+        .join(CatalogProductMedia, CatalogProductMedia.media_id == Media.id)
+        .filter(CatalogProductMedia.product_id == catalog_product_id)
+        .order_by(CatalogProductMedia.sort_order, CatalogProductMedia.created_at)
+        .first()
+    )
+    return bool(media and media.media_type == "video")
+
+
 def _parse_variant_video_urls(db: Session, row: CatalogProductVariant) -> list[str]:
     """Video entries embedded in this variant's own gallery_json (the
     counterpart `_parse_variant_gallery` strips out of the photo list) — a
@@ -1070,6 +1107,7 @@ def _load_variants(
                 image_url=row.image_url,
                 gallery=_parse_variant_gallery(db, row),
                 video_urls=_parse_variant_video_urls(db, row),
+                video_first=_variant_video_first(db, row),
                 is_default=bool(row.is_default),
                 in_stock=(
                     None
@@ -1391,6 +1429,7 @@ def _detail_from_ec(view, ec: EcommerceItem, db: Session) -> StorefrontProductDe
             catalog_product_id=ec.catalog_product_id,
         ),
         video_urls=_load_video_urls(db, ec.catalog_product_id),
+        video_first=_product_video_first(db, ec.catalog_product_id),
         seller_info=seller_info,
         source_url=source_url,
         variants=variants,
