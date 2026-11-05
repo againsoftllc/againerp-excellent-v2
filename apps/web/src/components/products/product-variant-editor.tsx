@@ -827,6 +827,17 @@ export function ProductVariantEditor({
     setRows((prev) => prev.map((r) => ({ ...r, isDefault: r.id === id })));
   };
 
+  /** Takes a variant out of the list; it is deleted for good when the product is saved. */
+  const removeRow = (id: string) => {
+    setRows((prev) => {
+      const left = prev.filter((r) => r.id !== id);
+      // the Default star must stay on a variant that is left
+      if (left.length > 0 && !left.some((r) => r.isDefault)) left[0] = { ...left[0], isDefault: true };
+      return left;
+    });
+    toast.success("Variant removed. It is deleted when you save the product.");
+  };
+
   const toggleRowEnabled = (id: string) => {
     setRows((prev) =>
       prev.map((r) => (r.id === id ? { ...r, status: r.status === "draft" ? "published" : "draft" } : r)),
@@ -1059,6 +1070,16 @@ export function ProductVariantEditor({
                                 >
                                   <Star className="h-3 w-3" />
                                 </Button>
+                                <Button
+                                  type="button"
+                                  size="sm"
+                                  variant="outline"
+                                  className="h-7 px-2 text-destructive hover:text-destructive"
+                                  onClick={() => removeRow(row.id)}
+                                  aria-label={`Remove ${row.label}`}
+                                >
+                                  <Trash2 className="h-3 w-3" />
+                                </Button>
                               </div>
                             </div>
                             <div className="grid gap-2">
@@ -1136,6 +1157,9 @@ export function ProductVariantEditor({
                       {manageStock && <th className="px-3 py-2">Stock</th>}
                       <th className="w-16 px-3 py-2">Enabled</th>
                       <th className="w-16 px-3 py-2">Default</th>
+                      <th className="w-12 px-3 py-2">
+                        <span className="sr-only">Remove</span>
+                      </th>
                     </tr>
                   </thead>
                   <tbody>
@@ -1146,7 +1170,7 @@ export function ProductVariantEditor({
                           {isTree && (
                             <tr className="border-t border-input bg-muted/40">
                               <td
-                                colSpan={(galleryMedia.length > 0 ? 9 : 8) - (manageStock ? 0 : 1)}
+                                colSpan={(galleryMedia.length > 0 ? 10 : 9) - (manageStock ? 0 : 1)}
                                 className="px-3 py-1.5 text-xs font-medium"
                               >
                                 <div className="flex items-center gap-2">
@@ -1266,6 +1290,19 @@ export function ProductVariantEditor({
                                     aria-label={`Set ${row.label} as default`}
                                   >
                                     <Star className="h-3.5 w-3.5" />
+                                  </Button>
+                                </td>
+                                <td className="px-3 py-2 text-center">
+                                  <Button
+                                    type="button"
+                                    size="sm"
+                                    variant="ghost"
+                                    className="h-7 w-7 rounded-none p-0 text-destructive hover:text-destructive"
+                                    onClick={() => removeRow(row.id)}
+                                    aria-label={`Remove ${row.label}`}
+                                    title="Remove this variant (deleted when you save the product)"
+                                  >
+                                    <Trash2 className="h-3.5 w-3.5" />
                                   </Button>
                                 </td>
                               </tr>
