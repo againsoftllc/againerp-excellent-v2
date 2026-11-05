@@ -1,11 +1,14 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
-import { ArrowDown, ArrowUp, Eye, EyeOff, Pencil, Plus, Trash2 } from "lucide-react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import type { ColDef, ICellRendererParams } from "ag-grid-community";
+import { ArrowDown, ArrowUp, ExternalLink, Eye, EyeOff, Pencil, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import { MediaLibraryModal } from "@/components/media/media-library-modal";
 import { MediaPickTile } from "@/components/media/media-pick-tile";
-import { Badge } from "@/components/ui/badge";
+import { DropdownMenuItem } from "@/components/ui/dropdown-menu";
+import { NUMERIC_CELL, NUMERIC_HEADER } from "@/components/shared/again-list-grid";
+import { MarketingListGrid, StatusBadge } from "@/components/website/marketing/marketing-list-grid";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
@@ -13,6 +16,8 @@ import { Textarea } from "@/components/ui/textarea";
 import { fetchBranches, saveBranches, type ApiBranch } from "@/lib/api/website-branches";
 import { createCatalogMediaBatch, uploadCatalogMediaFiles, useCatalogMedia } from "@/lib/api/use-catalog-media";
 import { useAdminCanWrite } from "@/lib/hooks/use-admin-can-write";
+
+type BranchRow = ApiBranch & { id: string; index: number };
 
 const BLANK: ApiBranch = { key: "", label: "", address: "", phone: "", map_url: "", image: "", hours: "", whatsapp: "", email: "", visible: true };
 
@@ -74,99 +79,141 @@ export function WebsiteBranchesPanel() {
     void persist(next, "Order saved");
   };
 
+  // the table's menus are built once; they always read the latest list and actions through this
+  const live = useRef({ rows, saving, persist, move, edit: setEditing });
+  live.current = { rows, saving, persist, move, edit: setEditing };
+
+  const gridRows = useMemo<BranchRow[]>(() => rows.map((r, index) => ({ ...r, id: r.key, index })), [rows]);
+
+  const [search, setSearch] = useState("");
+  const [onSite, setOnSite] = useState("all");
+  const filtered = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    return gridRows.filter((r) => {
+      if (onSite === "listed" && !r.visible) return false;
+      if (onSite === "hidden" && r.visible) return false;
+      return !q || r.label.toLowerCase().includes(q) || r.address.toLowerCase().includes(q) || r.phone.toLowerCase().includes(q);
+    });
+  }, [gridRows, search, onSite]);
+
+  const columns = useMemo<ColDef<BranchRow>[]>(
+    () => [
+      { colId: "no", headerName: "#", width: 56, valueGetter: (p) => (p.data ? p.data.index + 1 : ""), cellClass: NUMERIC_CELL, headerClass: NUMERIC_HEADER, sortable: false },
+      { field: "label", headerName: "Branch", flex: 1, minWidth: 150, cellClass: "font-medium" },
+      { field: "address", headerName: "Address", flex: 2, minWidth: 220, valueGetter: (p) => (p.data ? p.data.address.replace(/\s*\n\s*/g, " ") : "") },
+      { field: "phone", headerName: "Phone", width: 140, valueFormatter: (p) => p.value || "—" },
+      { field: "hours", headerName: "Hours", width: 150, valueFormatter: (p) => p.value || "Shop hours" },
+      {
+        field: "visible",
+        headerName: "On site",
+        width: 100,
+        cellRenderer: (p: ICellRendererParams<BranchRow>) =>
+          p.data ? <StatusBadge label={p.data.visible ? "Listed" : "Hidden"} tone={p.data.visible ? "success" : "muted"} /> : null,
+      },
+    ],
+    [],
+  );
+
+  const rowMenu = useCallback(
+    (row: BranchRow) => {
+      const { rows: list, saving: busy } = live.current;
+      const index = list.findIndex((r) => r.key === row.key);
+      return (
+        <>
+          <DropdownMenuItem onClick={() => live.current.edit({ index, branch: list[index] })}>
+            <Pencil className="mr-1.5 h-3 w-3" /> {canWrite ? "Edit" : "View"}
+          </DropdownMenuItem>
+          {canWrite ? (
+            <>
+              <DropdownMenuItem
+                disabled={busy}
+                onClick={() => void live.current.persist(list.map((r) => (r.key === row.key ? { ...r, visible: !r.visible } : r)))}
+              >
+                {row.visible ? <EyeOff className="mr-1.5 h-3 w-3" /> : <Eye className="mr-1.5 h-3 w-3" />}
+                {row.visible ? "Hide from the Branches page" : "List on the Branches page"}
+              </DropdownMenuItem>
+              <DropdownMenuItem disabled={busy || index <= 0} onClick={() => live.current.move(index, -1)}>
+                <ArrowUp className="mr-1.5 h-3 w-3" /> Move up
+              </DropdownMenuItem>
+              <DropdownMenuItem disabled={busy || index >= list.length - 1} onClick={() => live.current.move(index, 1)}>
+                <ArrowDown className="mr-1.5 h-3 w-3" /> Move down
+              </DropdownMenuItem>
+              <DropdownMenuItem
+                className="text-destructive"
+                disabled={busy || list.length <= 1}
+                onClick={() => {
+                  if (!window.confirm(`Delete the branch "${row.label}"? It also stops being offered for Store Pickup.`)) return;
+                  void live.current.persist(list.filter((r) => r.key !== row.key), "Branch deleted");
+                }}
+              >
+                <Trash2 className="mr-1.5 h-3 w-3" /> Delete
+              </DropdownMenuItem>
+            </>
+          ) : null}
+        </>
+      );
+    },
+    [canWrite],
+  );
+
+  const filtersActive = search.trim() !== "" || onSite !== "all";
+
   return (
-    <div className="flex min-h-0 flex-1 flex-col gap-3">
-      <div className="flex items-center gap-2">
-        <p className="text-sm text-muted-foreground">
-          These are also the store-pickup counters at checkout. A branch kept hidden is still offered for pickup but not listed on the Branches page or in the footer.
-        </p>
-        <Button asChild size="sm" variant="outline" className="ml-auto h-8 rounded-none">
-          <a href="/website/live-edit/branches" target="_blank" rel="noopener noreferrer">Edit the page in Live Edit</a>
-        </Button>
-        {canWrite ? (
-          <Button size="sm" className="h-8 rounded-none" disabled={saving} onClick={() => setEditing({ index: -1, branch: BLANK })}>
-            <Plus className="mr-1 h-3.5 w-3.5" />
-            New branch
-          </Button>
-        ) : null}
-      </div>
-
-      <div className="min-h-0 flex-1 overflow-auto border border-border">
-        <table className="w-full text-sm">
-          <thead className="sticky top-0 bg-muted/60 text-left text-xs uppercase tracking-wide text-muted-foreground">
-            <tr>
-              <th className="w-10 px-3 py-2">#</th>
-              <th className="px-3 py-2">Branch</th>
-              <th className="px-3 py-2">Address</th>
-              <th className="px-3 py-2">Phone</th>
-              <th className="px-3 py-2">Hours</th>
-              <th className="px-3 py-2">On site</th>
-              <th className="w-36 px-3 py-2" />
-            </tr>
-          </thead>
-          <tbody>
-            {loading && rows.length === 0 ? (
-              <tr><td colSpan={7} className="px-3 py-6 text-muted-foreground">Loading branches…</td></tr>
-            ) : (
-              rows.map((row, index) => (
-                <tr key={row.key} className="border-t border-border hover:bg-muted/30">
-                  <td className="px-3 py-2 text-muted-foreground">{index + 1}</td>
-                  <td className="px-3 py-2 font-medium">
-                    <button type="button" className="text-left hover:underline" onClick={() => setEditing({ index, branch: row })}>{row.label}</button>
-                  </td>
-                  <td className="max-w-[320px] truncate px-3 py-2 text-muted-foreground" title={row.address}>{row.address.replace(/\s*\n\s*/g, " ")}</td>
-                  <td className="px-3 py-2 text-muted-foreground">{row.phone || "—"}</td>
-                  <td className="px-3 py-2 text-muted-foreground">{row.hours || "Shop hours"}</td>
-                  <td className="px-3 py-2">
-                    <Badge variant={row.visible ? "default" : "secondary"} className="rounded-none">{row.visible ? "Listed" : "Hidden"}</Badge>
-                  </td>
-                  <td className="px-3 py-2">
-                    {canWrite ? (
-                      <div className="flex gap-0.5">
-                        <Button type="button" variant="ghost" size="icon" className="h-7 w-7" title="Move up" disabled={saving || index === 0} onClick={() => move(index, -1)}>
-                          <ArrowUp className="h-3.5 w-3.5" />
-                        </Button>
-                        <Button type="button" variant="ghost" size="icon" className="h-7 w-7" title="Move down" disabled={saving || index === rows.length - 1} onClick={() => move(index, 1)}>
-                          <ArrowDown className="h-3.5 w-3.5" />
-                        </Button>
-                        <Button
-                          type="button"
-                          variant="ghost"
-                          size="icon"
-                          className="h-7 w-7"
-                          title={row.visible ? "Hide from the Branches page" : "List on the Branches page"}
-                          disabled={saving}
-                          onClick={() => void persist(rows.map((r, i) => (i === index ? { ...r, visible: !r.visible } : r)))}
-                        >
-                          {row.visible ? <Eye className="h-3.5 w-3.5" /> : <EyeOff className="h-3.5 w-3.5" />}
-                        </Button>
-                        <Button type="button" variant="ghost" size="icon" className="h-7 w-7" title="Edit" onClick={() => setEditing({ index, branch: row })}>
-                          <Pencil className="h-3.5 w-3.5" />
-                        </Button>
-                        <Button
-                          type="button"
-                          variant="ghost"
-                          size="icon"
-                          className="h-7 w-7 text-destructive"
-                          title="Delete"
-                          disabled={saving || rows.length <= 1}
-                          onClick={() => {
-                            if (!window.confirm(`Delete the branch "${row.label}"? It also stops being offered for Store Pickup.`)) return;
-                            void persist(rows.filter((_, i) => i !== index), "Branch deleted");
-                          }}
-                        >
-                          <Trash2 className="h-3.5 w-3.5" />
-                        </Button>
-                      </div>
-                    ) : null}
-                  </td>
-                </tr>
-              ))
-            )}
-          </tbody>
-        </table>
-      </div>
-
+    <MarketingListGrid<BranchRow>
+      title="Branches"
+      rows={filtered}
+      loading={loading}
+      columns={columns}
+      rowMenu={rowMenu}
+      onNew={canWrite ? () => setEditing({ index: -1, branch: BLANK }) : undefined}
+      onRefresh={() => void load()}
+      onOpen={(row) => {
+        const list = live.current.rows;
+        const index = list.findIndex((r) => r.key === row.key);
+        if (index >= 0) setEditing({ index, branch: list[index] });
+      }}
+      search={{ value: search, onChange: setSearch, placeholder: "Search branch, address, phone…" }}
+      statusFilter={{
+        value: onSite,
+        onChange: setOnSite,
+        label: "On site filter",
+        options: [{ value: "all", label: "All branches" }, { value: "listed", label: "Listed" }, { value: "hidden", label: "Hidden" }],
+      }}
+      filtersActive={filtersActive}
+      onResetFilters={() => {
+        setSearch("");
+        setOnSite("all");
+      }}
+      emptyTitle="No branches yet"
+      emptyHint="Add the first shop with New."
+      layoutKey="grid-layout:website-branches"
+      note="These are also the store-pickup counters at checkout. A branch kept hidden is still offered for pickup but not listed on the Branches page or in the footer."
+      settingsMenu={
+        <DropdownMenuItem asChild>
+          <a href="/website/live-edit/branches" target="_blank" rel="noopener noreferrer">
+            <ExternalLink className="mr-1.5 h-3 w-3" /> Edit the page in Live Edit
+          </a>
+        </DropdownMenuItem>
+      }
+      mobile={
+        <div className="divide-y divide-border">
+          {filtered.map((row) => (
+            <button
+              key={row.key}
+              type="button"
+              className="flex w-full items-center justify-between gap-3 px-3 py-3 text-left"
+              onClick={() => setEditing({ index: row.index, branch: rows[row.index] })}
+            >
+              <span className="min-w-0">
+                <span className="block truncate text-sm font-medium">{row.label}</span>
+                <span className="block truncate text-xs text-muted-foreground">{row.phone || row.address}</span>
+              </span>
+              <StatusBadge label={row.visible ? "Listed" : "Hidden"} tone={row.visible ? "success" : "muted"} />
+            </button>
+          ))}
+        </div>
+      }
+    >
       <BranchFormSheet
         editing={editing}
         saving={saving}
@@ -178,7 +225,7 @@ export function WebsiteBranchesPanel() {
           setEditing(null);
         }}
       />
-    </div>
+    </MarketingListGrid>
   );
 }
 

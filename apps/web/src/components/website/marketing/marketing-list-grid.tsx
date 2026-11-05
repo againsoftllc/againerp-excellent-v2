@@ -60,6 +60,10 @@ type Props<T extends { id: string }> = {
   children?: ReactNode;
   /** The phone-width view (the table is hidden under 768px). */
   mobile?: ReactNode;
+  /** Extra items at the end of the toolbar's cog menu (DropdownMenuItem ...). */
+  settingsMenu?: ReactNode;
+  /** A one-line explanation under the toolbar. */
+  note?: ReactNode;
   error?: string | null;
 };
 
@@ -87,6 +91,8 @@ export function MarketingListGrid<T extends { id: string }>({
   layoutKey,
   children,
   mobile,
+  settingsMenu,
+  note,
   error,
 }: Props<T>) {
   const apiHealth = useApiHealth();
@@ -172,6 +178,7 @@ export function MarketingListGrid<T extends { id: string }>({
             <RefreshCw className={cn("mr-1.5 h-3 w-3", loading && "animate-spin")} />
             Refresh
           </DropdownMenuItem>
+          {settingsMenu}
         </DropdownMenuContent>
       </DropdownMenu>
     </ListGridHeaderStart>
@@ -188,6 +195,7 @@ export function MarketingListGrid<T extends { id: string }>({
         columnDefs={columnDefs}
         loading={loading && rows.length === 0}
         headerLeftActions={headerLeftActions}
+        banner={note ? <p className="border-b border-border px-3 py-1.5 text-xs text-muted-foreground">{note}</p> : undefined}
         filterBar={
           <>
             <Input

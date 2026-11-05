@@ -6,11 +6,7 @@ import { WebsiteBranchesPanel } from "@/components/website/branches/website-bran
 
 function BranchesContent() {
   return (
-    <div className="flex min-h-0 flex-1 flex-col gap-3 overflow-hidden">
-      <div className="shrink-0">
-        <h1 className="text-base font-semibold text-foreground">Branches</h1>
-        <p className="text-sm text-muted-foreground">Address, phone, hours, map and photo of each shop. The page&apos;s own layout is edited in Live Edit.</p>
-      </div>
+    <div className="flex min-h-0 w-full min-w-0 flex-1 flex-col overflow-hidden">
       <WebsiteBranchesPanel />
     </div>
   );
