@@ -6,13 +6,7 @@ import { MarketingPopupsPanel } from "@/components/website/marketing/marketing-p
 
 function PopupsContent() {
   return (
-    <div className="flex min-h-0 flex-1 flex-col gap-3 overflow-hidden">
-      <div className="shrink-0">
-        <h1 className="text-base font-semibold text-foreground">Popups</h1>
-        <p className="text-sm text-muted-foreground">
-          A Happy Hour, an offer, a notice or a picture shown over the storefront.
-        </p>
-      </div>
+    <div className="flex min-h-0 w-full min-w-0 flex-1 flex-col overflow-hidden">
       <MarketingPopupsPanel />
     </div>
   );

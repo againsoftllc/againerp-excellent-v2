@@ -1,11 +1,14 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
-import { Pencil, Plus, Trash2 } from "lucide-react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import type { ColDef, ICellRendererParams } from "ag-grid-community";
+import { Pencil, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import { MediaLibraryModal } from "@/components/media/media-library-modal";
 import { MediaPickTile } from "@/components/media/media-pick-tile";
-import { Badge } from "@/components/ui/badge";
+import { DropdownMenuItem } from "@/components/ui/dropdown-menu";
+import { NUMERIC_CELL, NUMERIC_HEADER } from "@/components/shared/again-list-grid";
+import { MarketingListGrid, StatusBadge, type StatusTone } from "@/components/website/marketing/marketing-list-grid";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Select } from "@/components/ui/native-select";
@@ -79,9 +82,7 @@ function Field({ label, hint, children }: { label: string; hint?: string; childr
   );
 }
 
-function statusVariant(status: string) {
-  return status === "active" ? "default" : "secondary";
-}
+const POPUP_TONE: Record<string, StatusTone> = { active: "success", draft: "warning", disabled: "muted" };
 
 export function MarketingPopupsPanel() {
   const canWrite = useAdminCanWrite();
@@ -104,84 +105,115 @@ export function MarketingPopupsPanel() {
     void refetch();
   }, [refetch]);
 
-  return (
-    <div className="flex min-h-0 flex-1 flex-col gap-3">
-      <div className="flex items-center gap-2">
-        <p className="text-sm text-muted-foreground">
-          One popup at most is shown per page. Higher priority goes first; a popup of an ended Happy Hour or Offer is skipped.
-        </p>
+  const [search, setSearch] = useState("");
+  const [statusFilter, setStatusFilter] = useState("all");
+  const filtered = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    return rows.filter((r) => (statusFilter === "all" || r.status === statusFilter) && (!q || r.name.toLowerCase().includes(q) || r.title.toLowerCase().includes(q)));
+  }, [rows, search, statusFilter]);
+
+  const editRef = useRef(setEditing);
+  editRef.current = setEditing;
+
+  const columns = useMemo<ColDef<ApiMarketingPopup>[]>(
+    () => [
+      { field: "name", headerName: "Name", flex: 1.4, minWidth: 160, cellClass: "font-medium" },
+      { colId: "kind", headerName: "Type", width: 130, valueGetter: (p) => (p.data ? (KINDS.find((k) => k.id === p.data!.kind)?.title ?? p.data.kind) : "") },
+      {
+        colId: "shown",
+        headerName: "Shown on",
+        flex: 1,
+        minWidth: 150,
+        valueGetter: (p) => (p.data ? `${p.data.pages === "home" ? "Home page" : p.data.pages === "all" ? "All pages" : `${p.data.paths.length} page(s)`} · ${p.data.devices}` : ""),
+      },
+      {
+        colId: "when",
+        headerName: "When",
+        flex: 1.2,
+        minWidth: 190,
+        valueGetter: (p) =>
+          p.data
+            ? `after ${p.data.delay_seconds}s · ${p.data.frequency === "session" ? "once a session" : p.data.frequency === "days" ? `every ${p.data.frequency_days} day(s)` : "every visit"}`
+            : "",
+      },
+      { field: "priority", headerName: "Priority", width: 90, cellClass: NUMERIC_CELL, headerClass: NUMERIC_HEADER },
+      {
+        field: "status",
+        headerName: "Status",
+        width: 110,
+        cellRenderer: (p: ICellRendererParams<ApiMarketingPopup>) =>
+          p.data ? <StatusBadge label={p.data.status} tone={POPUP_TONE[p.data.status] ?? "muted"} /> : null,
+      },
+      { field: "updated_at", headerName: "Updated", width: 150 },
+    ],
+    [],
+  );
+
+  const rowMenu = useCallback(
+    (row: ApiMarketingPopup) => (
+      <>
+        <DropdownMenuItem onClick={() => editRef.current(row)}>
+          <Pencil className="mr-1.5 h-3 w-3" /> Edit
+        </DropdownMenuItem>
         {canWrite ? (
-          <Button size="sm" className="ml-auto h-8 rounded-none" onClick={() => setEditing("new")}>
-            <Plus className="mr-1 h-3.5 w-3.5" />
-            New popup
-          </Button>
+          <DropdownMenuItem
+            className="text-destructive"
+            onClick={() => {
+              if (!window.confirm(`Delete the popup "${row.name}"?`)) return;
+              void deleteMarketingPopup(row.id)
+                .then(() => refetch())
+                .catch((err) => toast.error(err instanceof Error ? err.message : "Delete failed"));
+            }}
+          >
+            <Trash2 className="mr-1.5 h-3 w-3" /> Delete
+          </DropdownMenuItem>
         ) : null}
-      </div>
+      </>
+    ),
+    [canWrite, refetch],
+  );
 
-      <div className="min-h-0 flex-1 overflow-auto border border-border">
-        <table className="w-full text-sm">
-          <thead className="sticky top-0 bg-muted/60 text-left text-xs uppercase tracking-wide text-muted-foreground">
-            <tr>
-              <th className="px-3 py-2">Name</th>
-              <th className="px-3 py-2">Type</th>
-              <th className="px-3 py-2">Shown on</th>
-              <th className="px-3 py-2">When</th>
-              <th className="px-3 py-2">Priority</th>
-              <th className="px-3 py-2">Status</th>
-              <th className="w-20 px-3 py-2" />
-            </tr>
-          </thead>
-          <tbody>
-            {loading && rows.length === 0 ? (
-              <tr><td colSpan={7} className="px-3 py-6 text-muted-foreground">Loading popups…</td></tr>
-            ) : rows.length === 0 ? (
-              <tr><td colSpan={7} className="px-3 py-6 text-muted-foreground">No popups yet.</td></tr>
-            ) : (
-              rows.map((row) => (
-                <tr key={row.id} className="border-t border-border hover:bg-muted/30">
-                  <td className="px-3 py-2 font-medium">
-                    <button type="button" className="text-left hover:underline" onClick={() => setEditing(row)}>{row.name}</button>
-                  </td>
-                  <td className="px-3 py-2">{KINDS.find((k) => k.id === row.kind)?.title ?? row.kind}</td>
-                  <td className="px-3 py-2 text-muted-foreground">
-                    {row.pages === "home" ? "Home page" : row.pages === "all" ? "All pages" : `${row.paths.length} page(s)`} · {row.devices}
-                  </td>
-                  <td className="px-3 py-2 text-muted-foreground">
-                    after {row.delay_seconds}s · {row.frequency === "session" ? "once a session" : row.frequency === "days" ? `every ${row.frequency_days} day(s)` : "every visit"}
-                  </td>
-                  <td className="px-3 py-2">{row.priority}</td>
-                  <td className="px-3 py-2"><Badge variant={statusVariant(row.status)} className="rounded-none">{row.status}</Badge></td>
-                  <td className="px-3 py-2">
-                    {canWrite ? (
-                      <div className="flex gap-1">
-                        <Button type="button" variant="ghost" size="icon" className="h-7 w-7" title="Edit" onClick={() => setEditing(row)}>
-                          <Pencil className="h-3.5 w-3.5" />
-                        </Button>
-                        <Button
-                          type="button"
-                          variant="ghost"
-                          size="icon"
-                          className="h-7 w-7 text-destructive"
-                          title="Delete"
-                          onClick={() => {
-                            if (!window.confirm(`Delete the popup "${row.name}"?`)) return;
-                            void deleteMarketingPopup(row.id)
-                              .then(() => refetch())
-                              .catch((err) => toast.error(err instanceof Error ? err.message : "Delete failed"));
-                          }}
-                        >
-                          <Trash2 className="h-3.5 w-3.5" />
-                        </Button>
-                      </div>
-                    ) : null}
-                  </td>
-                </tr>
-              ))
-            )}
-          </tbody>
-        </table>
-      </div>
+  const filtersActive = search.trim() !== "" || statusFilter !== "all";
 
+  return (
+    <MarketingListGrid<ApiMarketingPopup>
+      title="Popups"
+      rows={filtered}
+      loading={loading}
+      columns={columns}
+      rowMenu={rowMenu}
+      onNew={canWrite ? () => setEditing("new") : undefined}
+      onRefresh={() => void refetch()}
+      onOpen={(row) => setEditing(row)}
+      search={{ value: search, onChange: setSearch, placeholder: "Search name, title…" }}
+      statusFilter={{
+        value: statusFilter,
+        onChange: setStatusFilter,
+        label: "Status filter",
+        options: [{ value: "all", label: "All statuses" }, { value: "active", label: "Active" }, { value: "draft", label: "Draft" }, { value: "disabled", label: "Disabled" }],
+      }}
+      filtersActive={filtersActive}
+      onResetFilters={() => {
+        setSearch("");
+        setStatusFilter("all");
+      }}
+      emptyTitle="No popups yet"
+      emptyHint="One popup at most is shown per page; the higher priority goes first. A popup of an ended Happy Hour or Offer is skipped."
+      layoutKey="grid-layout:marketing-popups"
+      mobile={
+        <div className="divide-y divide-border">
+          {filtered.map((row) => (
+            <button key={row.id} type="button" className="flex w-full items-center justify-between gap-3 px-3 py-3 text-left" onClick={() => setEditing(row)}>
+              <span className="min-w-0">
+                <span className="block truncate text-sm font-medium">{row.name}</span>
+                <span className="block truncate text-xs text-muted-foreground">{KINDS.find((k) => k.id === row.kind)?.title ?? row.kind}</span>
+              </span>
+              <StatusBadge label={row.status} tone={POPUP_TONE[row.status] ?? "muted"} />
+            </button>
+          ))}
+        </div>
+      }
+    >
       <PopupFormSheet
         popup={editing}
         onClose={() => setEditing(null)}
@@ -190,7 +222,7 @@ export function MarketingPopupsPanel() {
           await refetch();
         }}
       />
-    </div>
+    </MarketingListGrid>
   );
 }
 

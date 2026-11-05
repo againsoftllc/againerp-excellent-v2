@@ -1,10 +1,8 @@
 "use client";
 
 import "@/components/providers/ag-grid-provider";
-import { useGridLayout } from "@/components/shared/use-grid-layout";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, useCallback } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
-import { AgGridReact } from "ag-grid-react";
 import type { ColDef, ICellRendererParams } from "ag-grid-community";
 import {
   DndContext,
@@ -24,7 +22,6 @@ import { CSS } from "@dnd-kit/utilities";
 import {
   GripVertical,
   ImageUp,
-  MoreHorizontal,
   Pencil,
   Plus,
   Trash2,
@@ -48,16 +45,14 @@ import { ProductCombobox } from "@/components/products/product-combobox";
 import { AgaincartClassicEditor } from "@/components/products/againcart-classic-editor";
 import { MediaLibraryModal } from "@/components/media/media-library-modal";
 import type { MediaLibraryItem } from "@/lib/mock-data/media-library";
-import { useIsDark } from "@/lib/use-is-dark";
 import { useAdminCanWrite } from "@/lib/hooks/use-admin-can-write";
 import { useViewerWriteUrlGuard } from "@/lib/hooks/use-viewer-write-url-guard";
-import { useApiHealth } from "@/lib/api/use-api-health";
-import { ApiRefreshButton } from "@/components/products/api-refresh-button";
 import { getApiBaseUrl } from "@/lib/api/client";
 import { getStorefrontBaseUrl } from "@/lib/website/live-edit";
 import type { Product } from "@/lib/mock-data/products";
 import type { Category } from "@/lib/mock-data/categories";
 import { Badge } from "@/components/ui/badge";
+import { MarketingListGrid, StatusBadge, type StatusTone } from "@/components/website/marketing/marketing-list-grid";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Select } from "@/components/ui/native-select";
@@ -79,6 +74,7 @@ import {
 const PAGE_SIZE = 50;
 const CATEGORY_ADD_LIMIT = 24;
 const STATUS_OPTIONS: OfferStatus[] = ["draft", "scheduled", "running", "ended", "disabled"];
+const STATUS_TONE: Record<string, StatusTone> = { draft: "muted", scheduled: "warning", running: "success", ended: "outline", disabled: "muted" };
 
 type DiscountMode = "percent" | "amount";
 
@@ -244,9 +240,7 @@ function editorHtmlToTerms(html: string): string[] {
 export function OffersAdminPanel() {
   const router = useRouter();
   const searchParams = useSearchParams();
-  const isDark = useIsDark();
   const canWrite = useAdminCanWrite();
-  const apiHealth = useApiHealth();
   const { offers: campaigns, loading, error, refetch } = useMarketingOffers();
 
   const [search, setSearch] = useState("");
@@ -303,158 +297,103 @@ export function OffersAdminPanel() {
     });
   }, [campaigns, search, status]);
 
-  const columnDefs = useMemo<ColDef<ApiMarketingOffer>[]>(
+  const openEditRef = useRef(openEdit);
+  openEditRef.current = openEdit;
+
+  const columns = useMemo<ColDef<ApiMarketingOffer>[]>(
     () => [
-      {
-        field: "title",
-        headerName: "Offer",
-        flex: 1.6,
-        minWidth: 180,
-        cellRenderer: (p: ICellRendererParams<ApiMarketingOffer>) =>
-          p.data ? (
-            <button
-              type="button"
-              className="truncate text-left font-medium text-foreground hover:underline"
-              onClick={(e) => {
-                e.stopPropagation();
-                openEdit(p.data!);
-              }}
-            >
-              {p.data.title}
-            </button>
-          ) : null,
-      },
+      { field: "title", headerName: "Offer", flex: 1.6, minWidth: 180, cellClass: "font-medium" },
       { field: "slug", headerName: "Slug", width: 140 },
       {
         field: "status",
         headerName: "Status",
         width: 110,
         cellRenderer: (p: ICellRendererParams<ApiMarketingOffer>) =>
-          p.data ? (
-            <Badge
-              variant={p.data.status === "running" ? "default" : "secondary"}
-              className="rounded-none capitalize"
-            >
-              {p.data.status}
-            </Badge>
-          ) : null,
+          p.data ? <StatusBadge label={p.data.status} tone={STATUS_TONE[p.data.status] ?? "muted"} /> : null,
       },
       {
         colId: "deals",
         headerName: "Deals",
         width: 90,
-        valueGetter: (p) =>
-          (p.data?.sections || []).reduce((sum, s) => sum + (s.deals?.length ?? 0), 0),
+        valueGetter: (p) => (p.data?.sections || []).reduce((sum, s) => sum + (s.deals?.length ?? 0), 0),
       },
-      {
-        colId: "actions",
-        headerName: "",
-        width: 56,
-        pinned: "right",
-        sortable: false,
-        cellRenderer: (p: ICellRendererParams<ApiMarketingOffer>) =>
-          p.data ? (
-            <DropdownMenu>
-              <DropdownMenuTrigger asChild>
-                <Button variant="ghost" size="icon" className="h-7 w-7 rounded-none p-0">
-                  <MoreHorizontal className="h-4 w-4" />
-                </Button>
-              </DropdownMenuTrigger>
-              <DropdownMenuContent align="end" className="rounded-none">
-                <DropdownMenuItem onClick={() => openEdit(p.data!)}>
-                  <Pencil className="mr-2 h-3.5 w-3.5" />
-                  Edit
-                </DropdownMenuItem>
-                {canWrite ? (
-                  <DropdownMenuItem
-                    className="text-destructive"
-                    onClick={() => {
-                      void (async () => {
-                        if (!confirm(`Delete “${p.data!.title}”?`)) return;
-                        try {
-                          await deleteMarketingOffer(p.data!.id);
-                          toast.success("Deleted");
-                          await refetch();
-                        } catch (err) {
-                          toast.error(err instanceof Error ? err.message : "Delete failed");
-                        }
-                      })();
-                    }}
-                  >
-                    <Trash2 className="mr-2 h-3.5 w-3.5" />
-                    Delete
-                  </DropdownMenuItem>
-                ) : null}
-              </DropdownMenuContent>
-            </DropdownMenu>
-          ) : null,
-      },
+      { field: "updated_at", headerName: "Updated", width: 150 },
     ],
+    [],
+  );
+
+  const rowMenu = useCallback(
+    (row: ApiMarketingOffer) => (
+      <>
+        <DropdownMenuItem onClick={() => openEditRef.current(row)}>
+          <Pencil className="mr-1.5 h-3 w-3" /> Edit
+        </DropdownMenuItem>
+        {canWrite ? (
+          <DropdownMenuItem
+            className="text-destructive"
+            onClick={() => {
+              void (async () => {
+                if (!confirm(`Delete “${row.title}”?`)) return;
+                try {
+                  await deleteMarketingOffer(row.id);
+                  toast.success("Deleted");
+                  await refetch();
+                } catch (err) {
+                  toast.error(err instanceof Error ? err.message : "Delete failed");
+                }
+              })();
+            }}
+          >
+            <Trash2 className="mr-1.5 h-3 w-3" /> Delete
+          </DropdownMenuItem>
+        ) : null}
+      </>
+    ),
     [canWrite, refetch],
   );
 
-  // Column order + widths saved per admin (same as the other data tables).
-  const layout = useGridLayout("marketing-offers", columnDefs);
+  const filtersActive = search.trim() !== "" || status !== "all";
 
   return (
-    <div className="flex min-h-0 flex-1 flex-col gap-3">
-      <div className="flex flex-wrap items-center gap-2">
-        <Input
-          className="h-8 w-[220px] rounded-none"
-          placeholder="Search…"
-          value={search}
-          onChange={(e) => setSearch(e.target.value)}
-        />
-        <Select
-          className="h-8 w-[140px] rounded-none"
-          value={status}
-          onChange={(e) => setStatus(e.target.value)}
-        >
-          <option value="all">All status</option>
-          {STATUS_OPTIONS.map((key) => (
-            <option key={key} value={key}>
-              {key}
-            </option>
+    <MarketingListGrid<ApiMarketingOffer>
+      title="Offers"
+      rows={filtered}
+      loading={loading}
+      columns={columns}
+      rowMenu={rowMenu}
+      onNew={canWrite ? openCreate : undefined}
+      onRefresh={() => void refetch()}
+      onOpen={openEdit}
+      search={{ value: search, onChange: setSearch, placeholder: "Search title, slug…" }}
+      statusFilter={{
+        value: status,
+        onChange: setStatus,
+        label: "Status filter",
+        options: [{ value: "all", label: "All statuses" }, ...STATUS_OPTIONS.map((key) => ({ value: key, label: key[0].toUpperCase() + key.slice(1) }))],
+      }}
+      filtersActive={filtersActive}
+      onResetFilters={() => {
+        setSearch("");
+        setStatus("all");
+      }}
+      emptyTitle="No offers yet"
+      emptyHint="Create one with New."
+      layoutKey="grid-layout:marketing-offers"
+      mobile={
+        <div className="divide-y divide-border">
+          {filtered.map((row) => (
+            <button key={row.id} type="button" className="flex w-full items-center justify-between gap-3 px-3 py-3 text-left" onClick={() => openEdit(row)}>
+              <span className="min-w-0">
+                <span className="block truncate text-sm font-medium">{row.title}</span>
+                <span className="block truncate text-xs text-muted-foreground">/{row.slug}</span>
+              </span>
+              <StatusBadge label={row.status} tone={STATUS_TONE[row.status] ?? "muted"} />
+            </button>
           ))}
-        </Select>
-        <ApiRefreshButton
-          status={apiHealth.status}
-          loading={loading}
-          onRefresh={() => {
-            void refetch();
-            apiHealth.recheck();
-          }}
-        />
-        {canWrite ? (
-          <Button size="sm" className="ml-auto h-8 rounded-none" onClick={openCreate}>
-            <Plus className="mr-1 h-3.5 w-3.5" />
-            New
-          </Button>
-        ) : null}
-      </div>
-
-      <div style={layout.containerStyle} className={`ag-theme-quartz${isDark ? "-dark" : ""} min-h-0 flex-1`}>
-        {loading && campaigns.length === 0 ? (
-          <p className="p-4 text-sm text-muted-foreground">Loading Offers…</p>
-        ) : filtered.length === 0 ? (
-          <p className="p-4 text-sm text-muted-foreground">No offers match your filters.</p>
-        ) : (
-          <AgGridReact<ApiMarketingOffer>
-            rowData={filtered}
-            columnDefs={layout.columnDefs}
-            {...layout.gridProps}
-            getRowId={(p) => p.data.id}
-            pagination
-            paginationPageSize={PAGE_SIZE}
-            paginationPageSizeSelector={[50, 100, 500, 1000]}
-            suppressCellFocus
-            rowHeight={40}
-            headerHeight={36}
-            onRowDoubleClicked={(e) => e.data && openEdit(e.data)}
-          />
-        )}
-      </div>
-
+        </div>
+      }
+      error={error}
+    >
       <OfferFormSheet
         open={formOpen}
         mode={createOpen ? "create" : "edit"}
@@ -467,7 +406,7 @@ export function OffersAdminPanel() {
           closeForm();
         }}
       />
-    </div>
+    </MarketingListGrid>
   );
 }
 

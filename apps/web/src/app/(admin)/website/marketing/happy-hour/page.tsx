@@ -6,13 +6,7 @@ import { MarketingHappyHourPanel } from "@/components/website/marketing/marketin
 
 function HappyHourContent() {
   return (
-    <div className="flex min-h-0 flex-1 flex-col gap-3 overflow-hidden">
-      <div className="shrink-0">
-        <h1 className="text-base font-semibold text-foreground">Happy Hour</h1>
-        <p className="text-sm text-muted-foreground">
-          Nightly time-boxed deals with hand-picked products and campaign prices.
-        </p>
-      </div>
+    <div className="flex min-h-0 w-full min-w-0 flex-1 flex-col overflow-hidden">
       <MarketingHappyHourPanel />
     </div>
   );

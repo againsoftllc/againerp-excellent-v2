@@ -1,12 +1,10 @@
 "use client";
 
-import { useGridLayout } from "@/components/shared/use-grid-layout";
 import "@/components/providers/ag-grid-provider";
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
-import { AgGridReact } from "ag-grid-react";
 import type { ColDef, ICellRendererParams } from "ag-grid-community";
-import { MoreHorizontal, Pencil, Plus, Trash2 } from "lucide-react";
+import { Pencil, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import type { CouponStatus, MarketingCoupon } from "@/lib/mock-data/marketing";
 import {
@@ -15,13 +13,10 @@ import {
   updateMarketingCoupon,
 } from "@/lib/api/marketing-coupons";
 import { useMarketingCoupons } from "@/lib/api/use-marketing-coupons";
-import { useIsDark } from "@/lib/use-is-dark";
 import { useAdminCanWrite } from "@/lib/hooks/use-admin-can-write";
 import { useViewerWriteUrlGuard } from "@/lib/hooks/use-viewer-write-url-guard";
-import { useApiHealth } from "@/lib/api/use-api-health";
-import { ApiRefreshButton } from "@/components/products/api-refresh-button";
-import { cn } from "@/lib/utils";
 import { Badge } from "@/components/ui/badge";
+import { MarketingListGrid, StatusBadge, type StatusTone } from "@/components/website/marketing/marketing-list-grid";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Select } from "@/components/ui/native-select";
@@ -41,6 +36,7 @@ import { Label } from "@/components/ui/label";
 
 const PAGE_SIZE = 50;
 const STATUS_OPTIONS: CouponStatus[] = ["active", "scheduled", "expired", "disabled"];
+const STATUS_TONE: Record<string, StatusTone> = { active: "success", scheduled: "warning", expired: "outline", disabled: "muted" };
 
 function buildUrl(params: URLSearchParams) {
   const q = params.toString();
@@ -50,9 +46,7 @@ function buildUrl(params: URLSearchParams) {
 export function MarketingCouponsPanel() {
   const router = useRouter();
   const searchParams = useSearchParams();
-  const isDark = useIsDark();
   const canWrite = useAdminCanWrite();
-  const apiHealth = useApiHealth();
   const { coupons, loading, error, refetch } = useMarketingCoupons();
 
   const [search, setSearch] = useState("");
@@ -110,26 +104,12 @@ export function MarketingCouponsPanel() {
     });
   }, [coupons, search, status]);
 
-  const columnDefs = useMemo<ColDef<MarketingCoupon>[]>(
+  const openEditRef = useRef(openEdit);
+  openEditRef.current = openEdit;
+
+  const columns = useMemo<ColDef<MarketingCoupon>[]>(
     () => [
-      {
-        field: "code",
-        headerName: "Code",
-        width: 130,
-        cellRenderer: (p: ICellRendererParams<MarketingCoupon>) =>
-          p.data ? (
-            <button
-              type="button"
-              className="font-mono text-left font-medium text-foreground hover:underline"
-              onClick={(e) => {
-                e.stopPropagation();
-                openEdit(p.data!);
-              }}
-            >
-              {p.data.code}
-            </button>
-          ) : null,
-      },
+      { field: "code", headerName: "Code", width: 130, cellClass: "font-mono font-medium" },
       { field: "name", headerName: "Name", flex: 1.4, minWidth: 160 },
       { field: "discount", headerName: "Discount", width: 120 },
       {
@@ -137,25 +117,14 @@ export function MarketingCouponsPanel() {
         headerName: "Status",
         width: 110,
         cellRenderer: (p: ICellRendererParams<MarketingCoupon>) =>
-          p.data ? (
-            <Badge
-              variant={p.data.status === "active" ? "default" : "secondary"}
-              className="rounded-none capitalize"
-            >
-              {p.data.status}
-            </Badge>
-          ) : null,
+          p.data ? <StatusBadge label={p.data.status} tone={STATUS_TONE[p.data.status] ?? "muted"} /> : null,
       },
       {
         colId: "redemptions",
         headerName: "Redeemed",
         width: 110,
         valueGetter: (p) =>
-          p.data
-            ? p.data.limit != null
-              ? `${p.data.redemptions}/${p.data.limit}`
-              : String(p.data.redemptions)
-            : "",
+          p.data ? (p.data.limit != null ? `${p.data.redemptions}/${p.data.limit}` : String(p.data.redemptions)) : "",
       },
       {
         colId: "dates",
@@ -164,129 +133,83 @@ export function MarketingCouponsPanel() {
         minWidth: 170,
         valueGetter: (p) => (p.data ? `${p.data.startsAt} → ${p.data.endsAt}` : ""),
       },
-      {
-        colId: "actions",
-        headerName: "",
-        width: 56,
-        pinned: "right",
-        sortable: false,
-        cellRenderer: (p: ICellRendererParams<MarketingCoupon>) =>
-          p.data ? (
-            <DropdownMenu>
-              <DropdownMenuTrigger asChild>
-                <Button variant="ghost" size="icon" className="h-7 w-7 rounded-none p-0">
-                  <MoreHorizontal className="h-4 w-4" />
-                </Button>
-              </DropdownMenuTrigger>
-              <DropdownMenuContent align="end" className="rounded-none">
-                <DropdownMenuItem onClick={() => openEdit(p.data!)}>
-                  <Pencil className="mr-2 h-3.5 w-3.5" />
-                  Edit
-                </DropdownMenuItem>
-                {canWrite ? (
-                  <DropdownMenuItem
-                    className="text-destructive"
-                    onClick={() => {
-                      void (async () => {
-                        try {
-                          await deleteMarketingCoupon(p.data!.id);
-                          toast.success("Coupon deleted");
-                          await refetch();
-                        } catch (err) {
-                          toast.error(err instanceof Error ? err.message : "Delete failed");
-                        }
-                      })();
-                    }}
-                  >
-                    <Trash2 className="mr-2 h-3.5 w-3.5" />
-                    Delete
-                  </DropdownMenuItem>
-                ) : null}
-              </DropdownMenuContent>
-            </DropdownMenu>
-          ) : null,
-      },
     ],
+    [],
+  );
+
+  const rowMenu = useCallback(
+    (row: MarketingCoupon) => (
+      <>
+        <DropdownMenuItem onClick={() => openEditRef.current(row)}>
+          <Pencil className="mr-1.5 h-3 w-3" /> Edit
+        </DropdownMenuItem>
+        {canWrite ? (
+          <DropdownMenuItem
+            className="text-destructive"
+            onClick={() => {
+              void (async () => {
+                try {
+                  await deleteMarketingCoupon(row.id);
+                  toast.success("Coupon deleted");
+                  await refetch();
+                } catch (err) {
+                  toast.error(err instanceof Error ? err.message : "Delete failed");
+                }
+              })();
+            }}
+          >
+            <Trash2 className="mr-1.5 h-3 w-3" /> Delete
+          </DropdownMenuItem>
+        ) : null}
+      </>
+    ),
     [canWrite, refetch],
   );
 
-  // Column order + widths saved per admin (same as the other data tables).
-  const layout = useGridLayout("marketing-coupons", columnDefs);
+  const filtersActive = search.trim() !== "" || status !== "all";
 
   return (
-    <div className="relative flex min-h-0 flex-1 flex-col gap-3 overflow-hidden">
-      <div className="flex shrink-0 items-stretch overflow-hidden rounded-none border border-border bg-card">
-        <div className="flex min-w-0 flex-1 flex-wrap items-center gap-2 px-2 py-1.5">
-          <Input
-            placeholder="Search code, name…"
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            className="max-w-[260px] rounded-none border-0 bg-transparent shadow-none focus-visible:ring-0"
-          />
-          <Select
-            value={status}
-            onChange={(e) => setStatus(e.target.value)}
-            className="w-[150px] shrink-0 rounded-none border-0 bg-transparent shadow-none focus-visible:ring-0"
-          >
-            <option value="all">All statuses</option>
-            {STATUS_OPTIONS.map((key) => (
-              <option key={key} value={key}>
-                {key}
-              </option>
-            ))}
-          </Select>
-          <ApiRefreshButton
-            status={apiHealth.status}
-            loading={loading}
-            onRefresh={() => {
-              void refetch();
-              apiHealth.recheck();
-            }}
-            disabled={loading}
-          />
+    <MarketingListGrid<MarketingCoupon>
+      title="Coupons"
+      rows={filtered}
+      loading={loading}
+      columns={columns}
+      rowMenu={rowMenu}
+      onNew={canWrite ? openCreate : undefined}
+      onRefresh={() => void refetch()}
+      onOpen={openEdit}
+      search={{ value: search, onChange: setSearch, placeholder: "Search code, name…" }}
+      statusFilter={{
+        value: status,
+        onChange: setStatus,
+        label: "Status filter",
+        options: [{ value: "all", label: "All statuses" }, ...STATUS_OPTIONS.map((key) => ({ value: key, label: key[0].toUpperCase() + key.slice(1) }))],
+      }}
+      filtersActive={filtersActive}
+      onResetFilters={() => {
+        setSearch("");
+        setStatus("all");
+      }}
+      emptyTitle="No coupons yet"
+      emptyHint="Create one with New."
+      layoutKey="grid-layout:marketing-coupons"
+      mobile={
+        <div className="divide-y divide-border">
+          {filtered.map((row) => (
+            <button key={row.id} type="button" className="flex w-full items-center justify-between gap-3 px-3 py-3 text-left" onClick={() => openEdit(row)}>
+              <span className="min-w-0">
+                <span className="block truncate font-mono text-sm font-medium">{row.code}</span>
+                <span className="block truncate text-xs text-muted-foreground">
+                  {row.name} · {row.discount}
+                </span>
+              </span>
+              <StatusBadge label={row.status} tone={STATUS_TONE[row.status] ?? "muted"} />
+            </button>
+          ))}
         </div>
-        {canWrite ? (
-          <div className="flex shrink-0 items-center gap-2 border-l border-border bg-background px-2 py-1.5">
-            <Button size="sm" className="gap-1.5 rounded-none" onClick={openCreate}>
-              <Plus className="h-4 w-4" />
-              New coupon
-            </Button>
-          </div>
-        ) : null}
-      </div>
-
-      <div className="flex min-h-0 flex-1 flex-col">
-        {loading && coupons.length === 0 ? (
-          <div className="flex min-h-0 flex-1 items-center justify-center rounded-none border border-border bg-card">
-            <p className="text-sm text-muted-foreground">Loading coupons…</p>
-          </div>
-        ) : filtered.length === 0 ? (
-          <div className="flex min-h-0 flex-1 items-center justify-center rounded-none border border-dashed border-border bg-card">
-            <p className="text-sm text-muted-foreground">No coupons match your filters.</p>
-          </div>
-        ) : (
-          <div
-            style={layout.containerStyle}
-            className={cn(
-              "ag-theme-quartz control-border relative min-h-0 flex-1 overflow-hidden rounded-none bg-card [&_.ag-root-wrapper]:h-full",
-              isDark && "ag-theme-quartz-dark",
-            )}
-          >
-            <AgGridReact<MarketingCoupon>
-              rowData={filtered}
-              columnDefs={layout.columnDefs}
-              {...layout.gridProps}
-              getRowId={(p) => p.data.id}
-              pagination
-              paginationPageSize={PAGE_SIZE}
-              paginationPageSizeSelector={[50, 100, 500, 1000]}
-              suppressCellFocus
-              animateRows={false}
-            />
-          </div>
-        )}
-      </div>
-
+      }
+      error={error}
+    >
       <CouponFormSheet
         open={formOpen}
         mode={createOpen ? "create" : "edit"}
@@ -299,7 +222,7 @@ export function MarketingCouponsPanel() {
           closeForm();
         }}
       />
-    </div>
+    </MarketingListGrid>
   );
 }
 
