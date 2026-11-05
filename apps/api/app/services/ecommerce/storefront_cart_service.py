@@ -176,13 +176,32 @@ class StorefrontCartService:
             raise CartError("Product is not available")
         return ec
 
+    def _default_variant(self, ec: EcommerceItem) -> Optional[CatalogProductVariant]:
+        """The Default variant of a product that has variants to pick from (two or more with options), else None.
+
+        Whatever puts such a product in the cart without choosing one gets the same price the product page opens on,
+        never the product's own (possibly different) price."""
+        if not ec.catalog_product_id:
+            return None
+        rows = (
+            self._db.query(CatalogProductVariant)
+            .filter(
+                CatalogProductVariant.product_id == ec.catalog_product_id,
+                CatalogProductVariant.status == "published",
+            )
+            .order_by(CatalogProductVariant.is_default.desc(), CatalogProductVariant.sort_order.asc())
+            .all()
+        )
+        pickable = [r for r in rows if (r.options_json or "").strip() not in ("", "{}", "[]", "null")]
+        return pickable[0] if len(pickable) >= 2 else None
+
     def _resolve_variant(
         self,
         ec: EcommerceItem,
         variant_id: Optional[str],
     ) -> Optional[CatalogProductVariant]:
         if not variant_id:
-            return None
+            return self._default_variant(ec)
         variant = self._db.get(CatalogProductVariant, variant_id)
         if not variant or variant.product_id != ec.catalog_product_id:
             raise CartError("Variant is not available")

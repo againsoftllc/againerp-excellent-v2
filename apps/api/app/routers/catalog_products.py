@@ -593,6 +593,25 @@ def _ensure_default_variant(db: Session, product: CatalogProduct) -> None:
     ensure_default_variant(db, product)
 
 
+def _follow_default_variant_price(db: Session, product: CatalogProduct) -> bool:
+    """A product with variants to pick from (two or more with options) shows its Default variant's price everywhere
+    (cards, lists, the product page, the cart); keep the product's own price equal to it. True when it changed."""
+    rows = (
+        db.query(CatalogProductVariant)
+        .filter(CatalogProductVariant.product_id == product.id, CatalogProductVariant.status == "published")
+        .order_by(CatalogProductVariant.is_default.desc(), CatalogProductVariant.sort_order.asc())
+        .all()
+    )
+    pickable = [r for r in rows if (r.options_json or "").strip() not in ("", "{}", "[]", "null")]
+    if len(pickable) < 2:
+        return False
+    price = Decimal(pickable[0].price or 0)
+    if price <= 0 or Decimal(product.price or 0) == price:
+        return False
+    product.price = price
+    return True
+
+
 def _replace_variants(
     db: Session,
     product: CatalogProduct,
@@ -1521,6 +1540,10 @@ def replace_product_variants(
             raise HTTPException(status_code=409, detail=f"Variant SKU already in use: {item.sku}")
 
     _replace_variants(db, row, payload.variants)
+    db.flush()
+    if _follow_default_variant_price(db, row):
+        # the storefront price is a copy of the product price: bring it along
+        EcommerceItemService(db).sync_content_from_catalog(row, mirror_publish=False)
     db.commit()
     db.refresh(row)
     return ProductDetailResponse(data=_product_detail(db, row))

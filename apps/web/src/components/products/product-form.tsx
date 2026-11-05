@@ -1321,7 +1321,11 @@ export function ProductForm({
 
               <div data-section="pricing" className="mt-4">
                 <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-                  <Field label="Price (BDT)" required>
+                  <Field
+                    label="Price (BDT)"
+                    required
+                    hint={values.productType === "variable" && variantRows.length > 1 ? "follows the default variant on save" : undefined}
+                  >
                     <Input
                       type="number"
                       value={values.price}
