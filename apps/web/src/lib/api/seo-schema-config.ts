@@ -45,3 +45,19 @@ export async function saveSeoSchemaConfig(config: SeoSchemaConfig): Promise<SeoS
   });
   return res.data;
 }
+
+export type SeoRobotsConfig = { block_all: boolean; text: string };
+
+export async function fetchSeoRobots(): Promise<SeoRobotsConfig> {
+  const res = await apiFetch<{ data: SeoRobotsConfig }>("/api/v1/seo/schema-config/robots");
+  return res.data;
+}
+
+export async function saveSeoRobots(config: SeoRobotsConfig): Promise<SeoRobotsConfig> {
+  const res = await apiFetch<{ data: SeoRobotsConfig }>("/api/v1/seo/schema-config/robots", {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(config),
+  });
+  return res.data;
+}

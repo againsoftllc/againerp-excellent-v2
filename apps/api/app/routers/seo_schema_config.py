@@ -127,3 +127,55 @@ def storefront_seo_config(response: Response, db: Session = Depends(get_db)) -> 
     """What the storefront needs to build its JSON-LD and meta titles (nothing here is secret)."""
     response.headers["Cache-Control"] = "public, max-age=60"
     return SeoSchemaConfigResponse(data=load_config(db))
+
+
+# ---- robots.txt -------------------------------------------------------------------------------------------------------
+ROBOTS_KEY = "seo.robots"
+DEFAULT_ROBOTS_TEXT = "\n".join(
+    ["User-agent: *", "Allow: /", "Disallow: /cart", "Disallow: /checkout", "Disallow: /account", "Disallow: /website/", "Disallow: /api/"]
+)
+
+
+class RobotsConfig(BaseModel):
+    # Closed by default: a shop that was never configured must not open itself to crawlers by accident.
+    block_all: bool = True
+    text: str = Field(default=DEFAULT_ROBOTS_TEXT, max_length=5000)
+
+
+class RobotsConfigResponse(BaseModel):
+    data: RobotsConfig
+
+
+def load_robots(db: Session) -> RobotsConfig:
+    row = db.query(PlatformSetting).filter(PlatformSetting.key == ROBOTS_KEY).first()
+    if row and (row.value or "").strip():
+        try:
+            return RobotsConfig.model_validate(json.loads(row.value))
+        except (ValueError, TypeError):
+            pass  # an unreadable document is the (closed) defaults, never an error page
+    return RobotsConfig()
+
+
+@router.get("/robots", response_model=RobotsConfigResponse)
+def get_robots(db: Session = Depends(get_db)) -> RobotsConfigResponse:
+    return RobotsConfigResponse(data=load_robots(db))
+
+
+@router.put("/robots", response_model=RobotsConfigResponse)
+def save_robots(
+    payload: RobotsConfig, db: Session = Depends(get_db), _: object = Depends(require_write_access)
+) -> RobotsConfigResponse:
+    value = payload.model_dump_json()
+    row = db.query(PlatformSetting).filter(PlatformSetting.key == ROBOTS_KEY).first()
+    if row:
+        row.value = value
+    else:
+        db.add(PlatformSetting(key=ROBOTS_KEY, value=value, description="Storefront robots.txt", is_secret=False))
+    db.commit()
+    return RobotsConfigResponse(data=load_robots(db))
+
+
+@public_router.get("/robots-config", response_model=RobotsConfigResponse)
+def storefront_robots_config(response: Response, db: Session = Depends(get_db)) -> RobotsConfigResponse:
+    response.headers["Cache-Control"] = "public, max-age=60"
+    return RobotsConfigResponse(data=load_robots(db))
