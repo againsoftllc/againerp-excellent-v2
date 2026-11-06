@@ -47,6 +47,28 @@ type AdminAuthState = {
   clearSession: () => void;
 };
 
+/**
+ * A plain cookie that only says "an admin is signed in in this browser": the storefront shows its Live Edit / Edit product
+ * buttons when it sees it. It holds no token and grants nothing (editing needs this admin's own sign-in).
+ * It is set on the parent domain (erp.excellent.com.bd -> .excellent.com.bd) so the storefront (www.) can read it; on
+ * localhost / an IP it stays host-only, which every port of that host shares. NEXT_PUBLIC_EDITOR_COOKIE_DOMAIN overrides.
+ */
+const EDITOR_MARKER_COOKIE = "excellent_editor";
+function syncEditorMarker(signedIn: boolean, expiresAt?: string | null) {
+  if (typeof document === "undefined") return;
+  try {
+    const host = window.location.hostname;
+    const labels = host.split(".");
+    const configured = process.env.NEXT_PUBLIC_EDITOR_COOKIE_DOMAIN?.trim();
+    const domain = configured || (host === "localhost" || /^[\d.]+$/.test(host) || labels.length < 3 ? "" : `.${labels.slice(1).join(".")}`);
+    const left = expiresAt ? (Date.parse(expiresAt) - Date.now()) / 1000 : 8 * 3600;
+    const maxAge = signedIn && Number.isFinite(left) && left > 60 ? Math.floor(Math.min(left, 7 * 24 * 3600)) : 0;
+    document.cookie = `${EDITOR_MARKER_COOKIE}=${maxAge > 0 ? "1" : ""}; Path=/; Max-Age=${maxAge}; SameSite=Lax${domain ? `; Domain=${domain}` : ""}${window.location.protocol === "https:" ? "; Secure" : ""}`;
+  } catch {
+    /* the buttons simply do not show */
+  }
+}
+
 export const useAdminAuth = create<AdminAuthState>()(
   persist(
     (set) => ({
@@ -57,17 +79,21 @@ export const useAdminAuth = create<AdminAuthState>()(
       expiresAt: null,
       permissions: {},
       enabledModules: null,
-      setSession: ({ user, token, expiresAt, permissions, enabledModules }) =>
+      setSession: ({ user, token, expiresAt, permissions, enabledModules }) => {
+        syncEditorMarker(Boolean(token), expiresAt);
         set({
           user,
           token,
           expiresAt,
           permissions: permissions ?? {},
           enabledModules: enabledModules ?? null,
-        }),
+        });
+      },
       setPermissions: (permissions) => set({ permissions }),
-      clearSession: () =>
-        set({ user: null, token: null, expiresAt: null, permissions: {}, enabledModules: null }),
+      clearSession: () => {
+        syncEditorMarker(false);
+        set({ user: null, token: null, expiresAt: null, permissions: {}, enabledModules: null });
+      },
     }),
     {
       name: "againerp-admin-auth",
@@ -79,6 +105,8 @@ export const useAdminAuth = create<AdminAuthState>()(
         enabledModules: s.enabledModules,
       }),
       onRehydrateStorage: () => (state) => {
+        // already signed in when the admin opens (sessions from before this existed too): keep the marker in step
+        syncEditorMarker(Boolean(state?.token), state?.expiresAt);
         state?.setHasHydrated(true);
       },
     },

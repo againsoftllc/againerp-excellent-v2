@@ -21,6 +21,8 @@ type Props = {
   productName?: string;
   /** Bump z-index when opened over another sheet (e.g. sales order drawer). */
   nested?: boolean;
+  /** Fill the width of the window it opens in (the Live Edit side panel, whose width the editor drags) instead of a width of its own. */
+  fill?: boolean;
   onSaved?: (product?: Product) => void;
 };
 
@@ -31,6 +33,7 @@ export function ProductFormDialog({
   product,
   productName,
   nested = false,
+  fill = false,
   onSaved,
 }: Props) {
   const initialProduct =
@@ -91,14 +94,16 @@ export function ProductFormDialog({
             ? "Add product"
             : `Edit product${initialProduct?.name ? `: ${initialProduct.name}` : ""}`
         }
-        resizable
+        resizable={!fill}
         resizeMaxWidth={1100}
         closeButton="inside"
         onPointerDownOutside={() => saveDraftIfDirty()}
         onInteractOutside={() => saveDraftIfDirty()}
         onEscapeKeyDown={() => saveDraftIfDirty()}
         className={
-          nested
+          fill
+            ? "w-full min-w-0 max-w-none gap-0 overflow-hidden rounded-none border-l border-input bg-background p-0"
+            : nested
             ? "z-[260] w-[min(100%,48rem)] min-w-[320px] max-w-[1100px] gap-0 overflow-hidden rounded-none border-l border-input bg-background p-0"
             : "w-[min(100%,48rem)] min-w-[320px] max-w-[1100px] gap-0 overflow-hidden rounded-none border-l border-input bg-background p-0"
         }

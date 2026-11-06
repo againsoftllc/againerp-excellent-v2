@@ -8,6 +8,8 @@ import { Button } from "@/components/ui/button";
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { cn } from "@/lib/utils";
 import { LiveEditBrandsDrawer } from "@/components/website/live-edit/live-edit-brands-drawer";
+import { ProductFormDialog } from "@/components/products/product-form-dialog";
+import type { Product } from "@/lib/mock-data/products";
 import { LiveEditExcellentDrawer } from "@/components/website/live-edit/live-edit-excellent-drawer";
 import { LiveEditFeaturedDrawer } from "@/components/website/live-edit/live-edit-featured-drawer";
 import { LiveEditExcellentFooterDrawer, type FooterMenuItem, type FooterMenuState } from "@/components/website/live-edit/live-edit-excellent-footer-drawer";
@@ -68,8 +70,21 @@ const DEVICES: { id: DeviceId; label: string; icon: typeof Monitor; width: numbe
  * Either way it applies every click / toolbar action the page sends, pushes the
  * unsaved draft back as a live preview and saves the homepage row.
  */
-export function ExcellentLiveEditEmbedPanel({ shell = false, page = "home" }: { shell?: boolean; /** Which storefront page is edited: the home page (default) or the Branches page. */ page?: "home" | "branches" }) {
+export function ExcellentLiveEditEmbedPanel({
+  shell = false,
+  page = "home",
+  productId = "",
+  productSlug = "",
+}: {
+  shell?: boolean;
+  /** Which storefront page is edited: the home page (default), the Branches page or one product's page. */
+  page?: "home" | "branches" | "product";
+  /** page "product": the product's catalog id and storefront address. */
+  productId?: string;
+  productSlug?: string;
+}) {
   const router = useRouter();
+  const wantedProduct = page === "product" && /^[A-Za-z0-9-]{1,64}$/.test(productId) && /^[a-z0-9][a-z0-9-]{0,199}$/i.test(productSlug) ? { id: productId, slug: productSlug } : null;
   const setSession = useAdminAuth((s) => s.setSession);
   const authToken = useAdminAuth((s) => s.token);
   const authUser = useAdminAuth((s) => s.user);
@@ -81,8 +96,17 @@ export function ExcellentLiveEditEmbedPanel({ shell = false, page = "home" }: { 
   const draftRef = useRef(draft);
   const extraRef = useRef(extra);
   const frameRef = useRef<HTMLIFrameElement>(null);
+  /** True once the side panel has sent the page on after a product publish (so closing the editor does not send it twice). */
+  const productLeft = useRef(false);
+  /** Opened by a page's "Edit product" button (`?product=1`): only the product editor is wanted, so the sections list stays out of sight. */
+  const [productFirst, setProductFirst] = useState(false);
+  useEffect(() => {
+    setProductFirst(new URLSearchParams(window.location.search).get("product") === "1");
+  }, []);
   const [selected, setSelected] = useState<string | null>(null);
   const [drawerOpen, setDrawerOpen] = useState(false);
+  /** Catalog id of the product being edited (the product page's block was clicked): its full admin editor opens over the panel. */
+  const [productEdit, setProductEdit] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [locked, setLockedState] = useState(false);
   const [addAfter, setAddAfter] = useState<string | null>(null);
@@ -208,7 +232,19 @@ export function ExcellentLiveEditEmbedPanel({ shell = false, page = "home" }: { 
 
   const openEditor = useCallback(
     (id: string) => {
+      if (id.startsWith("product:")) {
+        const productId = id.slice("product:".length);
+        if (!productId) return;
+        setSelected(null);
+        setDrawerOpen(false);
+        setSectionsOpen(false);
+        productLeft.current = false;
+        setProductEdit(productId);
+        highlight(id);
+        return;
+      }
       if (!CHROME_IDS.has(id) && !isExcellentSection(id) && !isBranchSection(id)) return;
+      setProductFirst(false);
       setSelected(id);
       highlight(id);
       setDrawerOpen(true);
@@ -216,6 +252,15 @@ export function ExcellentLiveEditEmbedPanel({ shell = false, page = "home" }: { 
     },
     [highlight]
   );
+
+  // Product page: its editor opens as soon as the page is ready.
+  const productOpened = useRef(false);
+  useEffect(() => {
+    if (!ready || !wantedProduct || productOpened.current) return;
+    productOpened.current = true;
+    openEditor(`product:${wantedProduct.id}`);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [ready]);
 
   const closeDrawer = (open: boolean) => {
     setDrawerOpen(open);
@@ -297,7 +342,7 @@ export function ExcellentLiveEditEmbedPanel({ shell = false, page = "home" }: { 
     window.addEventListener("message", onMessage);
     return () => window.removeEventListener("message", onMessage);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [shell, locked, openEditor, layoutAction, selected]);
+  }, [shell, locked, openEditor, layoutAction, selected, toPage]);
 
   useEffect(() => {
     if (selected !== "footer" || !drawerOpen || footerMenu) return;
@@ -342,6 +387,8 @@ export function ExcellentLiveEditEmbedPanel({ shell = false, page = "home" }: { 
     );
   }
 
+  // Editing a product in the side panel: just the product editor, none of the sections list / header behind it.
+  const productMode = !shell && (productEdit !== null || productFirst);
   const layout = excellentLayoutOf(draft);
   const hiddenSections = layout.filter((b) => b.hidden);
   const open = !locked && drawerOpen;
@@ -349,7 +396,9 @@ export function ExcellentLiveEditEmbedPanel({ shell = false, page = "home" }: { 
   const frameWidth = DEVICES.find((d) => d.id === device)?.width ?? 1320;
   // This admin's own storefront (env) first: the saved site URLs can still point at another local stack.
   const storefrontBase = (process.env.NEXT_PUBLIC_STOREFRONT_URL?.trim() || getStorefrontBaseUrl()).replace(/\/$/, "");
-  const frameSrc = page === "branches" ? `${storefrontBase}/branches?liveEdit=1` : `${storefrontBase}/?liveEdit=1`;
+  const frameSrc = page === "branches" ? `${storefrontBase}/branches?liveEdit=1` : wantedProduct ? `${storefrontBase}/${wantedProduct.slug}?liveEdit=1` : `${storefrontBase}/?liveEdit=1`;
+  /** Leaves the editor for the real product page (a changed address included). */
+  const toProductPage = (slug: string) => window.location.assign(`${storefrontBase}/${slug}`);
   const pageLayout = page === "branches" ? BRANCH_SECTIONS.map((s) => ({ id: s.id, hidden: false })) : layout;
 
   const sectionButtons = (
@@ -379,8 +428,8 @@ export function ExcellentLiveEditEmbedPanel({ shell = false, page = "home" }: { 
 
   return (
     <div className="flex h-screen min-h-0 flex-col bg-background text-foreground">
-      <header className="relative z-20 flex h-11 shrink-0 items-center border-b border-border px-3">
-        <div className="z-10 flex items-center gap-1.5">
+      <header className={cn("relative z-20 flex h-11 shrink-0 items-center border-b border-border px-3", productMode && "hidden")}>
+        <div className={cn("z-10 flex items-center gap-1.5", page === "product" && "hidden")}>
           <Button type="button" size="sm" className="h-8 bg-[#00a09d] px-3 text-[13px] text-white hover:bg-[#008f8c]" disabled={saving} onClick={() => void save()}>
             {saving ? "Saving…" : "Save"}
           </Button>
@@ -459,12 +508,41 @@ export function ExcellentLiveEditEmbedPanel({ shell = false, page = "home" }: { 
           />
         </div>
       ) : (
-        <div className="flex-1 overflow-y-auto p-3">
+        <div className={cn("flex-1 overflow-y-auto p-3", productMode && "hidden")}>
           <p className="mb-3 text-xs text-muted-foreground">Click a section on the site to edit it here, or pick one below.</p>
           <div className="grid gap-0.5">{sectionButtons}</div>
         </div>
       )}
 
+      <ProductFormDialog
+        open={productEdit !== null}
+        mode="edit"
+        // in the side panel the editor drags the panel's width on the page, so the drawer simply fills it
+        fill={!shell}
+        product={productEdit ? ({ id: productEdit } as Product) : null}
+        onOpenChange={(next) => {
+          if (next) return;
+          const id = productEdit;
+          setProductEdit(null);
+          highlight(null);
+          // Closing the product editor (side panel) goes back to the real product page. A publish has already sent
+          // the user on with the saved address; the short delay lets that message win when both happen together.
+          if (!shell && id && !productLeft.current) window.setTimeout(() => !productLeft.current && toPage({ type: LIVE_EDIT_MSG.leave, slug: "", productId: id }), 250);
+          // full-screen product editor: closing it goes back to the real product page
+          if (wantedProduct && !productLeft.current) window.setTimeout(() => !productLeft.current && toProductPage(wantedProduct.slug), 250);
+        }}
+        // Side panel: publish = back to the real page (at the saved address). Full-screen editor: the page just refreshes.
+        onSaved={(saved) => {
+          if (wantedProduct) {
+            // published: back to the real product page (at its saved address)
+            productLeft.current = true;
+            return toProductPage(saved?.slug || wantedProduct.slug);
+          }
+          if (shell) return toPage({ type: LIVE_EDIT_MSG.reload, slug: saved?.slug ?? "", productId: productEdit ?? "" });
+          productLeft.current = true;
+          toPage({ type: LIVE_EDIT_MSG.leave, slug: saved?.slug ?? "", productId: productEdit ?? "" });
+        }}
+      />
       <LiveEditHeroDrawer onBack={backToSections} open={open && selected === "hero"} onOpenChange={closeDrawer} content={draft} sectionSize={sectionSize} onChange={setDraft} onSave={() => void save()} saving={saving} />
       <LiveEditFeaturedDrawer onBack={backToSections} open={open && selected === "featured"} onOpenChange={closeDrawer} content={draft} onChange={setDraft} onSave={() => void save()} saving={saving} />
       <LiveEditBrandsDrawer onBack={backToSections} open={open && selected === "brands"} onOpenChange={closeDrawer} content={draft} onChange={setDraft} onSave={() => void save()} saving={saving} />

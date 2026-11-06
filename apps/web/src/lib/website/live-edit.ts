@@ -213,6 +213,8 @@ export const LIVE_EDIT_MSG = {
   auth: "live-edit:auth",
   /** Embed panel → storefront (host): user closed the editor panel. */
   close: "live-edit:close",
+  /** Embed panel → storefront: a product was published / its editor closed: leave Live Edit for the real page. */
+  leave: "live-edit:leave",
 } as const;
 
 export type LiveEditAuthMessage = {
