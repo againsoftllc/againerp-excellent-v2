@@ -5,6 +5,7 @@ import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
+import { SeoVerificationCard } from "@/components/seo/seo-verification-card";
 import { useAdminCanWrite } from "@/lib/hooks/use-admin-can-write";
 import {
   DEFAULT_SEO_CONFIG,
@@ -230,6 +231,8 @@ export function SeoConfigForm({ section }: { section: SeoConfigSection }) {
             </div>
           </section>
         ) : null}
+
+        {section === "general" ? <SeoVerificationCard /> : null}
 
         {section === "sitemap" ? (
           <section className="overflow-hidden rounded-none border border-border bg-card">

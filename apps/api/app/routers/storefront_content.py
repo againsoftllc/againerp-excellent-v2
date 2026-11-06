@@ -113,6 +113,9 @@ class StorefrontSettingsRead(BaseModel):
     builder_plugins: dict = Field(default_factory=dict)
     # Whether the Live Chat button/widget shows on the storefront at all.
     live_chat_enabled: bool = True
+    # Search engine ownership codes for the <head> meta tags (Settings in SEO → Config); empty = no tag.
+    google_site_verification: str = ""
+    bing_site_verification: str = ""
     # Public social profile URLs; empty means "no profile, hide the icon".
     social: dict = Field(default_factory=dict)
     # Per-site branding / chrome from workspace_sites.options_json.storefront.
@@ -360,6 +363,24 @@ def get_storefront_page(slug: str, response: Response, db: Session = Depends(get
     )
 
 
+_VERIFICATION_TOKEN_RE = re.compile(r"^[A-Za-z0-9_\-]{10,200}$")
+_VERIFICATION_CONTENT_RE = re.compile(r"content\s*=\s*[\"']([^\"']+)[\"']", re.IGNORECASE)
+
+
+def _verification_code(db: Session, key: str) -> str:
+    """A search engine verification code from the platform settings, safe to print in a meta tag.
+
+    The admin may paste the whole <meta ...> tag Google shows; its content="…" value is taken. Anything that is
+    not a plain token (letters, digits, - and _) is dropped, so a stray value can never break out of the tag.
+    """
+    from app.routers.platform_settings import get_platform_setting
+
+    raw = (get_platform_setting(db, key) or "").strip()
+    match = _VERIFICATION_CONTENT_RE.search(raw)
+    code = (match.group(1) if match else raw).strip()
+    return code if _VERIFICATION_TOKEN_RE.match(code) else ""
+
+
 @router.get("/settings", response_model=StorefrontSettingsResponse)
 def get_storefront_settings(
     request: Request,
@@ -467,6 +488,8 @@ def get_storefront_settings(
             account_menu=load_account_menu_settings(db),
             builder_plugins=load_builder_plugin_settings(db),
             live_chat_enabled=load_live_chat_enabled(db),
+            google_site_verification=_verification_code(db, "seo.google_site_verification"),
+            bing_site_verification=_verification_code(db, "seo.bing_site_verification"),
             social=social,
             site_code=(site.code if site and site.code else ""),
             site_is_primary=bool(site.is_primary) if site else True,

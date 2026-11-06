@@ -282,6 +282,18 @@ KNOWN_KEYS: dict[str, dict[str, Any]] = {
         "group": "plugins",
         "label": "AI Search Plugin",
     },
+    "seo.google_site_verification": {
+        "description": "Google Search Console site verification code (the content of the google-site-verification meta tag)",
+        "is_secret": False,
+        "group": "seo",
+        "label": "Google site verification",
+    },
+    "seo.bing_site_verification": {
+        "description": "Bing Webmaster Tools site verification code (the content of the msvalidate.01 meta tag)",
+        "is_secret": False,
+        "group": "seo",
+        "label": "Bing site verification",
+    },
     "workspace.disabled_modules": {
         "description": "JSON list of workspace module ids turned off for every user (Workspace > Apps)",
         "is_secret": False,
