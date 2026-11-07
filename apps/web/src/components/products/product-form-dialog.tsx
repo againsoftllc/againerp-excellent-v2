@@ -48,10 +48,13 @@ export function ProductFormDialog({
 
   // Create mode only — restore an unsaved draft left behind by an accidental
   // outside-click/Escape (see docs/ERP-UI-COMMON.md #10).
+  // Bumped by "Discard": the form is built again from scratch (and the stored draft is already gone).
+  const [formEpoch, setFormEpoch] = useState(0);
   const draftOverride = useMemo(() => {
     if (!open || mode !== "create" || product || productName) return undefined;
     return readDraft<ProductFormValues>(DRAFT_KEY)?.values;
-  }, [open, mode, product, productName]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- formEpoch re-reads the (now empty) draft after Discard
+  }, [open, mode, product, productName, formEpoch]);
 
   const toastedDraftRef = useRef(false);
   useEffect(() => {
@@ -64,7 +67,16 @@ export function ProductFormDialog({
       const draft = readDraft<ProductFormValues>(DRAFT_KEY);
       if (draft) {
         toast.info(`Restored unsaved product draft from ${draftAgeLabel(draft.savedAt)}`, {
-          action: { label: "Discard", onClick: () => clearDraft(DRAFT_KEY) },
+          action: {
+            label: "Discard",
+            // Throw the draft away AND empty the form (it already shows the restored values): a blank new product.
+            // Without the reset the old values stayed on screen and were saved as a draft again on the next outside click.
+            onClick: () => {
+              clearDraft(DRAFT_KEY);
+              latestValuesRef.current = null;
+              setFormEpoch((n) => n + 1);
+            },
+          },
         });
       }
     }
@@ -111,6 +123,7 @@ export function ProductFormDialog({
       >
         <div className="flex h-full min-h-0 flex-col px-4 pb-4 pt-3">
           <ProductForm
+            key={formEpoch}
             mode={mode}
             initialProduct={initialProduct}
             initialValuesOverride={draftOverride}
