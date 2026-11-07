@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from typing import List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Response
@@ -45,14 +45,30 @@ def _terms_list(raw: str | None) -> list[str]:
     return []
 
 
-def _is_public(row: MarketingOffer, now: datetime) -> bool:
+# Times are stored as UTC; the shop is in Bangladesh (UTC+6, no daylight saving), so that is how a start is written out.
+_DHAKA = timezone(timedelta(hours=6))
+
+
+def _starts_label(dt: datetime) -> str:
+    """"11 Nov 2026, 12:00 AM" in Dhaka time."""
+    return dt.replace(tzinfo=timezone.utc).astimezone(_DHAKA).strftime("%d %b %Y, %I:%M %p")
+
+
+def _state(row: MarketingOffer, now: datetime) -> Optional[str]:
+    """"live" (shown with its products), "upcoming" (a scheduled offer that has not started: its page shows the
+    countdown and the description only) or None (not shown at all)."""
     if row.status in {"disabled", "draft", "ended"}:
-        return False
+        return None
     if row.status == "running":
-        return True
-    if row.status == "scheduled":
-        return row.starts_at <= now <= row.ends_at
-    return row.starts_at <= now <= row.ends_at
+        return "live"
+    if now < row.starts_at:
+        return "upcoming" if row.status == "scheduled" else None
+    return "live" if now <= row.ends_at else None
+
+
+def _is_public(row: MarketingOffer, now: datetime) -> bool:
+    """Running now (what the popups use): an upcoming offer is not public yet."""
+    return _state(row, now) == "live"
 
 
 class StorefrontOfferSummary(BaseModel):
@@ -69,6 +85,10 @@ class StorefrontOfferSummary(BaseModel):
     endDate: str
     startDateISO: str
     endDateISO: str
+    # "live" | "upcoming": an upcoming offer has not started yet (the storefront shows "Starts in ..." and no products).
+    status: str = "live"
+    # The start as shown to shoppers, in Dhaka time ("11 Nov 2026, 12:00 AM").
+    startsAtLabel: str = ""
     dailyStartHour: Optional[int] = None
     dailyEndHour: Optional[int] = None
     outletLabel: str
@@ -106,7 +126,7 @@ class StorefrontOfferDetailResponse(BaseModel):
     data: StorefrontOfferDetail
 
 
-def _summary(row: MarketingOffer) -> StorefrontOfferSummary:
+def _summary(row: MarketingOffer, state: str = "live") -> StorefrontOfferSummary:
     return StorefrontOfferSummary(
         slug=row.slug,
         title=row.title,
@@ -118,20 +138,22 @@ def _summary(row: MarketingOffer) -> StorefrontOfferSummary:
         endDate=_fmt_display(row.ends_at),
         startDateISO=_fmt_iso(row.starts_at),
         endDateISO=_fmt_iso(row.ends_at),
+        status=state,
+        startsAtLabel=_starts_label(row.starts_at),
         dailyStartHour=row.daily_start_hour,
         dailyEndHour=row.daily_end_hour,
         outletLabel=row.outlet_label or "All Outlet",
     )
 
 
-def _detail(db: Session, row: MarketingOffer) -> StorefrontOfferDetail:
+def _detail(db: Session, row: MarketingOffer, state: str = "live") -> StorefrontOfferDetail:
     """Hand-picked deals, same shape as storefront_happy_hour.py `_detail`.
     Outside the (optional) nightly window the sections come back empty — the
     page itself (title/countdown/terms) still shows so shoppers know when it
     opens, same nightly gating as Happy Hour."""
     catalog = StorefrontCatalogService(db)
     sections: List[StorefrontOfferSection] = []
-    live_now = True  # an offer runs its whole date range - there is no nightly window
+    live_now = state == "live"  # an offer runs its whole date range; before it starts nothing but the countdown is shown
     if live_now:
         from app.models.catalog_product import CatalogProduct
 
@@ -196,8 +218,9 @@ def _detail(db: Session, row: MarketingOffer) -> StorefrontOfferDetail:
                     products=products,
                 )
             )
-    base = _summary(row)
-    return StorefrontOfferDetail(**base.model_dump(), terms=_terms_list(row.terms_json), sections=sections)
+    base = _summary(row, state)
+    terms = _terms_list(row.terms_json) if live_now else []
+    return StorefrontOfferDetail(**base.model_dump(), terms=terms, sections=sections)
 
 
 @router.get("/offer-pages", response_model=StorefrontOfferListResponse)
@@ -210,8 +233,11 @@ def list_offer_pages(response: Response, db: Session = Depends(get_db)) -> Store
         .order_by(MarketingOffer.sort_order.asc(), MarketingOffer.starts_at.desc())
         .all()
     )
-    visible = [row for row in rows if _is_public(row, now) and row.starts_at <= now <= row.ends_at]
-    return StorefrontOfferListResponse(data=[_summary(row) for row in visible])
+    states = [(row, _state(row, now)) for row in rows]
+    live = [row for row, st in states if st == "live" and row.starts_at <= now <= row.ends_at]
+    upcoming = sorted((row for row, st in states if st == "upcoming"), key=lambda r: r.starts_at)
+    # running now first, then what is coming (soonest first)
+    return StorefrontOfferListResponse(data=[_summary(row, "live") for row in live] + [_summary(row, "upcoming") for row in upcoming])
 
 
 @router.get("/offer-pages/{slug}", response_model=StorefrontOfferDetailResponse)
@@ -230,7 +256,7 @@ def get_offer_page(
     )
     if not row:
         raise HTTPException(status_code=404, detail="Offer not found")
-    now = datetime.utcnow()
-    if not _is_public(row, now):
+    state = _state(row, datetime.utcnow())
+    if state is None:
         raise HTTPException(status_code=404, detail="Offer not found")
-    return StorefrontOfferDetailResponse(data=_detail(db, row))
+    return StorefrontOfferDetailResponse(data=_detail(db, row, state))
