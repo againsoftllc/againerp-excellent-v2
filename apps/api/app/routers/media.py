@@ -8,6 +8,7 @@ from typing import List, Optional
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile
 from sqlalchemy.orm import Session
 
+from app.services.image_optimize import optimize_upload
 from app.services.media_storage import save_media_bytes, get_cloudflare_plugin, local_public_url
 from app.services.cloudflare_client import delete_from_r2
 from app.deps.auth import get_current_company_id, require_write_access
@@ -214,11 +215,12 @@ async def upload_media(
         if ext not in allowed:
             continue
 
+        content = await upload.read()
+        mime = upload.content_type or "application/octet-stream"
+        # JPEG / PNG / BMP are kept as WebP of a sensible size (see app/services/image_optimize.py)
+        content, filename, mime = optimize_upload(content, filename, mime)
         safe_name = re.sub(r"[^a-zA-Z0-9._-]", "_", filename)
         stored = f"{uuid.uuid4().hex}_{safe_name}"
-        content = await upload.read()
-
-        mime = upload.content_type or "application/octet-stream"
         media_type = _classify_filename(filename, mime)
         title, alt = derive_labels_from_file_name(filename)
         public_url, local_path, provider = save_media_bytes(db, stored, content, mime)

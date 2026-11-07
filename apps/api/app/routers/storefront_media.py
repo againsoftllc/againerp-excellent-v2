@@ -19,6 +19,7 @@ from app.schemas.media import (
     MediaRead,
     derive_labels_from_file_name,
 )
+from app.services.image_optimize import optimize_upload
 from app.services.media_storage import save_media_bytes
 
 router = APIRouter(tags=["storefront-media"])
@@ -106,10 +107,11 @@ async def storefront_media_upload(
         if ext not in ALLOWED_IMAGE:
             continue
 
-        safe_name = re.sub(r"[^a-zA-Z0-9._-]", "_", filename)
-        stored = f"{uuid.uuid4().hex}_{safe_name}"
         content = await upload.read()
         mime = upload.content_type or "image/jpeg"
+        content, filename, mime = optimize_upload(content, filename, mime)
+        safe_name = re.sub(r"[^a-zA-Z0-9._-]", "_", filename)
+        stored = f"{uuid.uuid4().hex}_{safe_name}"
         title, alt = derive_labels_from_file_name(filename)
         public_url, local_path, provider = save_media_bytes(db, stored, content, mime)
         row = Media(
