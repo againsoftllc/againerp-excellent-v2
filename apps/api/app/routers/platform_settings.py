@@ -288,6 +288,12 @@ KNOWN_KEYS: dict[str, dict[str, Any]] = {
         "group": "seo",
         "label": "Google site verification",
     },
+    "seo.google_analytics_id": {
+        "description": "Google Analytics 4 measurement ID (G-XXXXXXXXXX): the storefront loads Google Analytics with it",
+        "is_secret": False,
+        "group": "seo",
+        "label": "Google Analytics measurement ID",
+    },
     "seo.bing_site_verification": {
         "description": "Bing Webmaster Tools site verification code (the content of the msvalidate.01 meta tag)",
         "is_secret": False,

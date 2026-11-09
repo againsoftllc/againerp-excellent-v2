@@ -116,6 +116,8 @@ class StorefrontSettingsRead(BaseModel):
     # Search engine ownership codes for the <head> meta tags (Settings in SEO → Config); empty = no tag.
     google_site_verification: str = ""
     bing_site_verification: str = ""
+    # Google Analytics 4 measurement ID (G-XXXXXXXXXX) from SEO → Config; empty = the storefront loads no analytics at all.
+    google_analytics_id: str = ""
     # Public social profile URLs; empty means "no profile, hide the icon".
     social: dict = Field(default_factory=dict)
     # Per-site branding / chrome from workspace_sites.options_json.storefront.
@@ -381,6 +383,19 @@ def _verification_code(db: Session, key: str) -> str:
     return code if _VERIFICATION_TOKEN_RE.match(code) else ""
 
 
+_GA_ID_RE = re.compile(r"\bG-[A-Z0-9]{4,20}\b")
+
+
+def _analytics_id(db: Session, key: str) -> str:
+    """The GA4 measurement ID from the platform settings. Whatever was pasted, only a plain "G-XXXXXXXX" ID is taken
+    (it is printed inside a script, so nothing else may pass)."""
+    from app.routers.platform_settings import get_platform_setting
+
+    raw = (get_platform_setting(db, key) or "").strip().upper()
+    match = _GA_ID_RE.search(raw)
+    return match.group(0) if match else ""
+
+
 @router.get("/settings", response_model=StorefrontSettingsResponse)
 def get_storefront_settings(
     request: Request,
@@ -490,6 +505,7 @@ def get_storefront_settings(
             live_chat_enabled=load_live_chat_enabled(db),
             google_site_verification=_verification_code(db, "seo.google_site_verification"),
             bing_site_verification=_verification_code(db, "seo.bing_site_verification"),
+            google_analytics_id=_analytics_id(db, "seo.google_analytics_id"),
             social=social,
             site_code=(site.code if site and site.code else ""),
             site_is_primary=bool(site.is_primary) if site else True,
