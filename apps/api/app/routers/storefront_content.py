@@ -391,6 +391,9 @@ def _analytics_id(db: Session, key: str) -> str:
     (it is printed inside a script, so nothing else may pass)."""
     from app.routers.platform_settings import get_platform_setting
 
+    # the On / Off switch in the admin: "false" keeps the saved ID but sends none to the storefront (so nothing is loaded)
+    if (get_platform_setting(db, "seo.google_analytics_enabled") or "").strip().lower() in {"false", "0", "off"}:
+        return ""
     raw = (get_platform_setting(db, key) or "").strip().upper()
     match = _GA_ID_RE.search(raw)
     return match.group(0) if match else ""

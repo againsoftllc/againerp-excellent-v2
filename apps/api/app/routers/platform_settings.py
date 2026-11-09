@@ -294,6 +294,12 @@ KNOWN_KEYS: dict[str, dict[str, Any]] = {
         "group": "seo",
         "label": "Google Analytics measurement ID",
     },
+    "seo.google_analytics_enabled": {
+        "description": "Google Analytics on/off switch: 'false' stops the storefront loading it while the measurement ID stays saved (anything else = on)",
+        "is_secret": False,
+        "group": "seo",
+        "label": "Google Analytics on/off",
+    },
     "seo.bing_site_verification": {
         "description": "Bing Webmaster Tools site verification code (the content of the msvalidate.01 meta tag)",
         "is_secret": False,

@@ -4,10 +4,12 @@ import { useEffect, useState } from "react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Switch } from "@/components/ui/switch";
 import { fetchPlatformSettings, upsertPlatformSetting } from "@/lib/api/platform-settings";
 import { useAdminCanWrite } from "@/lib/hooks/use-admin-can-write";
 
 const KEY = "seo.google_analytics_id";
+const ENABLED_KEY = "seo.google_analytics_enabled";
 const ID_RE = /\bG-[A-Z0-9]{4,20}\b/;
 
 /** The G-XXXXXXXXXX ID inside whatever was pasted (the ID, or the whole gtag snippet), upper-cased; "" when there is none. */
@@ -26,6 +28,9 @@ export function SeoAnalyticsCard() {
   const [saved, setSaved] = useState("");
   const [loaded, setLoaded] = useState(false);
   const [saving, setSaving] = useState(false);
+  /** The On / Off switch: off keeps the saved ID but the website loads no analytics. A missing setting means on. */
+  const [enabled, setEnabled] = useState(true);
+  const [toggling, setToggling] = useState(false);
 
   useEffect(() => {
     let live = true;
@@ -35,6 +40,7 @@ export function SeoAnalyticsCard() {
         const current = rows.find((r) => r.key === KEY)?.value ?? "";
         setValue(current);
         setSaved(current);
+        setEnabled((rows.find((r) => r.key === ENABLED_KEY)?.value ?? "").trim().toLowerCase() !== "false");
         setLoaded(true);
       })
       .catch(() => live && toast.error("Could not load the Google Analytics ID"));
@@ -46,6 +52,19 @@ export function SeoAnalyticsCard() {
   const dirty = value !== saved;
   const typed = value.trim();
   const invalid = typed !== "" && idOf(typed) === "";
+
+  const toggle = async (next: boolean) => {
+    setToggling(true);
+    try {
+      await upsertPlatformSetting(ENABLED_KEY, next ? "true" : "false");
+      setEnabled(next);
+      toast.success(next ? "Google Analytics is ON. It is on the website within a minute." : "Google Analytics is OFF. The website stops loading it within a minute (the ID stays saved).");
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Could not change the Google Analytics switch");
+    } finally {
+      setToggling(false);
+    }
+  };
 
   const save = async () => {
     const next = idOf(value);
@@ -69,6 +88,22 @@ export function SeoAnalyticsCard() {
         <h2 className="text-[13px] font-semibold text-foreground">Google Analytics</h2>
       </div>
       <div className="space-y-4 px-4 py-4">
+        <div className="max-w-xl">
+          <Switch
+            id="seo-ga-enabled"
+            label={enabled ? "Google Analytics is ON" : "Google Analytics is OFF"}
+            description={
+              enabled
+                ? saved
+                  ? "The website counts visits and shop events. Turn off to stop it; the ID below stays saved."
+                  : "On, but no measurement ID is saved yet: nothing is loaded until you save one below."
+                : "Nothing is loaded from Google on the website. Turn on to start counting again with the saved ID."
+            }
+            checked={enabled}
+            onCheckedChange={(next: boolean) => void toggle(next)}
+            disabled={!canWrite || !loaded || toggling}
+          />
+        </div>
         <p className="text-[12px] text-muted-foreground">
           Paste the Google Analytics 4 measurement ID and save: the website then counts visits, and sends product views,
           add to cart, checkout starts, orders (with their value) and searches. Leave it empty to turn Google Analytics off.
