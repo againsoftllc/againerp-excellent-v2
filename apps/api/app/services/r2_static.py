@@ -20,6 +20,9 @@ from app.services.cloudflare_client import _s3_client, is_r2_connected, resolve_
 from app.services.media_storage import get_cloudflare_plugin
 
 log = logging.getLogger(__name__)
+# slim containers' mime tables can lack modern image types
+mimetypes.add_type("image/webp", ".webp")
+mimetypes.add_type("image/avif", ".avif")
 # a slot ("<slug>-1.webp") can be replaced by a different picture, so no "immutable"
 CACHE = "public, max-age=86400"
 
@@ -51,6 +54,8 @@ class R2FallbackStaticFiles(StaticFiles):
             if hit is None:
                 raise
             body, mime = hit
-            if not mime or mime == "binary/octet-stream":
+            # R2 objects uploaded without a type come back as a generic octet-stream; Facebook/WhatsApp reject an
+            # og:image served that way, so derive the real image type from the file extension.
+            if not mime or mime in ("binary/octet-stream", "application/octet-stream"):
                 mime = mimetypes.guess_type(path)[0] or "application/octet-stream"
             return Response(content=body, media_type=mime, headers={"Cache-Control": CACHE})
