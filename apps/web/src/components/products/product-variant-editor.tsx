@@ -829,12 +829,17 @@ export function ProductVariantEditor({
 
   /** Takes a variant out of the list; it is deleted for good when the product is saved. */
   const removeRow = (id: string) => {
-    setRows((prev) => {
-      const left = prev.filter((r) => r.id !== id);
-      // the Default star must stay on a variant that is left
-      if (left.length > 0 && !left.some((r) => r.isDefault)) left[0] = { ...left[0], isDefault: true };
-      return left;
-    });
+    const left = rows.filter((r) => r.id !== id);
+    // the Default star must stay on a variant that is left
+    if (left.length > 0 && !left.some((r) => r.isDefault)) left[0] = { ...left[0], isDefault: true };
+    setRows(left);
+    if (left.length === 0) {
+      // No custom variant is left: the product goes back to a plain Simple product (one default variant).
+      setDimensions([]);
+      onProductTypeChange("simple");
+      toast.success("All variants removed. The product is Simple again once you save it.");
+      return;
+    }
     toast.success("Variant removed. It is deleted when you save the product.");
   };
 

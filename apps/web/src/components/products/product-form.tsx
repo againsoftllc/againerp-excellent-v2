@@ -967,7 +967,7 @@ export function ProductForm({
         // A product still typed Simple (its variants have no attribute) must also save when a variant was removed,
         // otherwise the removed one stays in the database.
         const variantRemoved = loadedVariantIds.current.some((id) => !variantRows.some((r) => r.id === id));
-        if (values.productType === "variable" || (values.productType === "simple" && variantRemoved && variantRows.length > 0)) {
+        if (values.productType === "variable" || (values.productType === "simple" && variantRemoved)) {
           await replaceProductVariants(initialProduct.id, rowsToVariantUpserts(variantRows));
         }
         await replaceProductMedia(initialProduct.id, productMedia.map((m) => m.id));

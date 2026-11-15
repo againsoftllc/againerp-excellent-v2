@@ -625,8 +625,26 @@ def _replace_variants(
     }
     keep_ids: set[str] = set()
 
-    if not variants and product.product_type == "simple":
-        _ensure_default_variant(db, product)
+    if not variants and product.product_type != "digital":
+        # Every custom variant was removed: leave one plain Default variant (the product's own SKU and price).
+        # The Default row is kept (not recreated) so its stock levels survive.
+        keep = next((v for v in existing.values() if v.is_default), None) or next(iter(existing.values()), None)
+        for vid, row in existing.items():
+            if row is not keep:
+                db.delete(row)
+        db.flush()  # the removed rows go first, so the product's SKU is free for the kept one
+        if keep is None:
+            _ensure_default_variant(db, product)
+            return
+        keep.name = "Default"
+        keep.sku = product.sku or keep.sku
+        keep.price = product.price
+        keep.options_json = None
+        keep.gallery_json = None
+        keep.image_id = None
+        keep.image_url = None
+        keep.is_default = True
+        keep.sort_order = 0
         return
 
     for idx, item in enumerate(variants):
@@ -1523,6 +1541,7 @@ def replace_product_variants(
         raise HTTPException(status_code=404, detail="Product not found")
 
     skus = [v.sku for v in payload.variants]
+    print(f"[variants] PUT product={product_id} sent={skus}", flush=True)
     if len(skus) != len(set(skus)):
         raise HTTPException(status_code=400, detail="Duplicate variant SKUs in payload")
 
