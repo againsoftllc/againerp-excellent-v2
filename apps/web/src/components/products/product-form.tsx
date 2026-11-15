@@ -493,6 +493,8 @@ export function ProductForm({
   const slugManuallyEdited = useRef(!!initialProduct?.slug);
   /** the stock status picked by hand before Manage Stock was switched on (restored when it is switched off) */
   const lastManualStockStatus = useRef<ProductFormValues["stockStatus"]>("");
+  /** Variant ids the product had when it was opened, to tell on save that one was removed. */
+  const loadedVariantIds = useRef<string[]>([]);
   const [values, setValues] = useState<ProductFormValues>(() => ({
     ...PRODUCT_FORM_DEFAULT_VALUES,
     ...(initialProduct
@@ -747,6 +749,7 @@ export function ProductForm({
     setOriginOptions(buildOriginOptions(productDetail.origin?.trim() || ""));
     const loadedRows = variantsToRows(productDetail.variants);
     setVariantRows(loadedRows);
+    loadedVariantIds.current = loadedRows.map((r) => r.id);
     // A product that has variants (a Colour ...) opens with the Variable tab selected, as a plain one opens on Simple.
     if (productDetail.productType !== "digital" && loadedRows.some((r) => Object.keys(r.dimensions).length > 0)) {
       setValues((prev) => ({ ...prev, productType: "variable" }));
@@ -961,7 +964,10 @@ export function ProductForm({
           ...payload,
           slug: finalSlug,
         });
-        if (values.productType === "variable") {
+        // A product still typed Simple (its variants have no attribute) must also save when a variant was removed,
+        // otherwise the removed one stays in the database.
+        const variantRemoved = loadedVariantIds.current.some((id) => !variantRows.some((r) => r.id === id));
+        if (values.productType === "variable" || (values.productType === "simple" && variantRemoved && variantRows.length > 0)) {
           await replaceProductVariants(initialProduct.id, rowsToVariantUpserts(variantRows));
         }
         await replaceProductMedia(initialProduct.id, productMedia.map((m) => m.id));
