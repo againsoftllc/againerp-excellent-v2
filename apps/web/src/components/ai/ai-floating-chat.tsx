@@ -182,6 +182,9 @@ function LiveDot({ live }: { live: boolean }) {
   );
 }
 
+/** The round Aladin button that floats over every admin page. Hidden: Aladin is opened from the top bar (AI) or the AI page; the chat window itself is unchanged. */
+const SHOW_FLOATING_LAUNCHER = false;
+
 export function AiFloatingChat() {
   const open = useAppStore((s) => s.aiDrawerOpen);
   const setOpen = useAppStore((s) => s.setAiDrawerOpen);
@@ -540,6 +543,7 @@ export function AiFloatingChat() {
 
   const ui = (
     <>
+      {SHOW_FLOATING_LAUNCHER ? (
       <div
         data-aladin-chat=""
         className="fixed"
@@ -581,6 +585,7 @@ export function AiFloatingChat() {
           </span>
         </button>
       </div>
+      ) : null}
 
       {open ? (
         <div
