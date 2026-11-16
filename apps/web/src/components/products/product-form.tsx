@@ -11,10 +11,12 @@ import {
   ImagePlus,
   Layers,
   Package,
+  Plus,
   Search,
   SlidersHorizontal,
   Tag,
   Warehouse,
+  X,
 } from "lucide-react";
 import { toast } from "sonner";
 import { importCatalogImagesFromUrls } from "@/lib/catalog/import-catalog-images";
@@ -310,6 +312,7 @@ function variantsToRows(
     image_url?: string | null;
     gallery_json?: string | null;
     options_json?: string | null;
+    mpn?: string | null;
   }[],
 ): VariantMatrixRow[] {
   return variants.map((v) => ({
@@ -320,6 +323,7 @@ function variantsToRows(
     stock: v.stock,
     isDefault: v.is_default,
     dimensions: parseVariantOptions(v.options_json),
+    mpn: v.mpn?.trim() || undefined,
     imageId: v.image_id ?? undefined,
     imageUrl: v.image_url ?? undefined,
     gallery: parseVariantGallery(v.gallery_json, v.image_id, v.image_url),
@@ -365,8 +369,29 @@ function rowsToVariantUpserts(rows: VariantMatrixRow[]): VariantUpsertInput[] {
     image_url: cover?.url || row.imageUrl || null,
     gallery_json: gallery.length ? JSON.stringify(gallery) : null,
     options_json: Object.keys(row.dimensions).length ? JSON.stringify(row.dimensions) : null,
+    mpn: row.mpn?.trim() || null,
     };
   });
+}
+
+/** The MPN list as it is saved: trimmed, blanks and repeats dropped. */
+function cleanMpns(list: string[]): string[] {
+  const out: string[] = [];
+  for (const raw of list) {
+    const v = raw.trim().slice(0, 200);
+    if (v && !out.includes(v)) out.push(v);
+  }
+  return out;
+}
+
+function parseMpns(raw?: string | null): string[] {
+  if (!raw) return [];
+  try {
+    const data = JSON.parse(raw) as unknown;
+    return Array.isArray(data) ? cleanMpns(data.map((x) => String(x ?? ""))) : [];
+  } catch {
+    return [];
+  }
 }
 
 function buildProductPayload(
@@ -376,6 +401,7 @@ function buildProductPayload(
   thumbnail?: string,
   customSpecsJson?: string,
   variantAttributesJson?: string | null,
+  mpns?: string[],
 ) {
   const name = truncateToLimit(values.name.trim(), PRODUCT_FIELD_LIMITS.name);
   const slug = truncateToLimit(
@@ -425,6 +451,7 @@ function buildProductPayload(
     thumbnail: thumbnail ? truncateToLimit(thumbnail, PRODUCT_FIELD_LIMITS.thumbnail) : thumbnail,
     custom_specs_json: customSpecsJson ?? null,
     variant_attributes_json: variantAttributesJson ?? null,
+    mpns_json: JSON.stringify(cleanMpns(mpns ?? [])),
   };
 }
 
@@ -476,6 +503,8 @@ export function ProductForm({
   const [autosave, setAutosave] = useState("All changes saved");
   const [productMedia, setProductMedia] = useState<MediaLibraryItem[]>([]);
   const [variantRows, setVariantRows] = useState<VariantMatrixRow[]>([]);
+  /** Manufacturer part numbers typed by hand; each variant can pick one. An empty box is a row not filled in yet. */
+  const [mpns, setMpns] = useState<string[]>([]);
   const [variantAttributes, setVariantAttributes] = useState<VariantDimension[]>(() =>
     mode === "create" ? getPresetDimensions(initialProduct?.category) : [],
   );
@@ -749,6 +778,7 @@ export function ProductForm({
     setOriginOptions(buildOriginOptions(productDetail.origin?.trim() || ""));
     const loadedRows = variantsToRows(productDetail.variants);
     setVariantRows(loadedRows);
+    setMpns(parseMpns(productDetail.mpnsJson));
     loadedVariantIds.current = loadedRows.map((r) => r.id);
     // A product that has variants (a Colour ...) opens with the Variable tab selected, as a plain one opens on Simple.
     if (productDetail.productType !== "digital" && loadedRows.some((r) => Object.keys(r.dimensions).length > 0)) {
@@ -848,6 +878,25 @@ export function ProductForm({
     });
   }
 
+  /** Typing in an MPN box also renames it on the variants that picked it, so their pick is not lost. */
+  const changeMpn = (index: number, value: string) => {
+    const old = mpns[index] ?? "";
+    setMpns((prev) => {
+      const next = prev.length > 0 ? [...prev] : [""];
+      next[index] = value;
+      return next;
+    });
+    if (old.trim() && old.trim() !== value.trim()) {
+      setVariantRows((rows) => rows.map((r) => (r.mpn === old.trim() ? { ...r, mpn: value.trim() || undefined } : r)));
+    }
+  };
+
+  const removeMpn = (index: number) => {
+    const old = (mpns[index] ?? "").trim();
+    setMpns((prev) => prev.filter((_, i) => i !== index));
+    if (old) setVariantRows((rows) => rows.map((r) => (r.mpn === old ? { ...r, mpn: undefined } : r)));
+  };
+
   const handleSave = async (publish = false) => {
     if (!values.name.trim()) {
       toast.error("Product name is required");
@@ -912,6 +961,7 @@ export function ProductForm({
       thumbnail,
       customSpecsJson ?? undefined,
       variantAttributesJson,
+      mpns,
     );
     setSaving(true);
     try {
@@ -1159,7 +1209,7 @@ export function ProductForm({
         <div
           ref={contentRef}
           data-product-form-content
-          className={`min-h-0 min-w-0 flex-1 ${inDialog ? "overflow-y-auto pr-1" : "overflow-y-auto pb-4 md:pb-8"}`}
+          className={`min-h-0 min-w-0 flex-1 ${inDialog ? "overflow-y-auto px-1" : "overflow-y-auto px-1 pb-4 md:pb-8"}`}
         >
           <div className="divide-y divide-border [&>[data-section=general]]:border-t-0">
           <div data-section="media" className="pb-4 pt-0">
@@ -1249,6 +1299,29 @@ export function ProductForm({
                     placeholder="Model"
                     maxLength={PRODUCT_FIELD_LIMITS.model}
                   />
+                </Field>
+                <Field label="MPN">
+                  <div className="space-y-1.5">
+                    {(mpns.length > 0 ? mpns : [""]).map((m, i) => (
+                      <div key={i} className="flex items-center gap-1.5">
+                        <Input
+                          value={m}
+                          onChange={(e) => changeMpn(i, e.target.value)}
+                          placeholder="Manufacturer part number"
+                          maxLength={200}
+                        />
+                        {(mpns.length > 1 || m) && (
+                          <Button type="button" variant="outline" size="icon" className="h-9 w-9 shrink-0" onClick={() => removeMpn(i)} aria-label="Remove MPN">
+                            <X className="h-4 w-4" />
+                          </Button>
+                        )}
+                      </div>
+                    ))}
+                    <Button type="button" variant="outline" size="sm" className="h-8" onClick={() => setMpns((prev) => [...(prev.length > 0 ? prev : [""]), ""])}>
+                      <Plus className="mr-1 h-3.5 w-3.5" />
+                      Add MPN
+                    </Button>
+                  </div>
                 </Field>
                 <Field label="Category">
                   <CategoryCombobox
@@ -1512,6 +1585,7 @@ export function ProductForm({
                 productType={values.productType}
                 onProductTypeChange={(t) => set("productType", t)}
                 baseSku={values.sku}
+                mpnOptions={cleanMpns(mpns)}
                 basePrice={values.price}
                 category={values.category}
                 rows={variantRows}

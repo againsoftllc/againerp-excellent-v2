@@ -91,6 +91,8 @@ class CatalogProduct(Base):
     # Variant attribute definitions (name + ordered values + optional per-value image) —
     # persisted separately from custom_specs_json so the Variants tab survives reload.
     variant_attributes_json: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    # Manufacturer part numbers (MPN) of the product, a JSON list of strings; each variant picks one (variant.mpn).
+    mpns_json: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     # Combo product composition — list of {product_id, variant_id, product_name, sku,
     # quantity, unit_price, thumbnail}; only meaningful when product_type == "combo".
     combo_components_json: Mapped[Optional[str]] = mapped_column(Text, nullable=True)

@@ -35,7 +35,36 @@ type Props = {
   galleryMedia?: MediaLibraryItem[];
   /** The product manages stock: only then is a variant's quantity used, so only then it can be edited. */
   manageStock?: boolean;
+  /** The product's MPN list: each variant picks one (like it picks its images). */
+  mpnOptions?: string[];
 };
+
+/** Pick one of the product's MPNs for a variant ("—" = none). */
+function MpnSelect({
+  value,
+  options,
+  onChange,
+}: {
+  value?: string;
+  options: string[];
+  onChange: (mpn: string | undefined) => void;
+}) {
+  return (
+    <select
+      className="h-7 w-full min-w-[8rem] rounded-none border border-input bg-background px-2 font-mono text-xs"
+      value={value && options.includes(value) ? value : ""}
+      onChange={(e) => onChange(e.target.value || undefined)}
+      aria-label="MPN"
+    >
+      <option value="">—</option>
+      {options.map((m) => (
+        <option key={m} value={m}>
+          {m}
+        </option>
+      ))}
+    </select>
+  );
+}
 
 function Field({
   label,
@@ -610,6 +639,7 @@ export function ProductVariantEditor({
   onDimensionsChange,
   galleryMedia = [],
   manageStock = true,
+  mpnOptions = [],
 }: Props) {
   const [internalDimensions, setInternalDimensions] = useState<VariantDimension[]>(() =>
     controlledDimensions ?? getPresetDimensions(category),
@@ -1095,6 +1125,11 @@ export function ProductVariantEditor({
                                   onChange={(e) => updateRow(row.id, { sku: e.target.value })}
                                 />
                               </Field>
+                              {mpnOptions.length > 0 && (
+                                <Field label="MPN">
+                                  <MpnSelect value={row.mpn} options={mpnOptions} onChange={(mpn) => updateRow(row.id, { mpn })} />
+                                </Field>
+                              )}
                               <div className="grid grid-cols-3 gap-2">
                                 <Field label="Purchase price">
                                   <Input
@@ -1156,6 +1191,7 @@ export function ProductVariantEditor({
                       {galleryMedia.length > 0 && <th className="w-10 px-3 py-2">Img</th>}
                       <th className="px-3 py-2">Variant</th>
                       <th className="px-3 py-2">SKU</th>
+                      {mpnOptions.length > 0 && <th className="px-3 py-2">MPN</th>}
                       <th className="px-3 py-2">Purchase price</th>
                       <th className="px-3 py-2">Margin (%)</th>
                       <th className="px-3 py-2">Sales Price</th>
@@ -1175,7 +1211,7 @@ export function ProductVariantEditor({
                           {isTree && (
                             <tr className="border-t border-input bg-muted/40">
                               <td
-                                colSpan={(galleryMedia.length > 0 ? 10 : 9) - (manageStock ? 0 : 1)}
+                                colSpan={(galleryMedia.length > 0 ? 10 : 9) - (manageStock ? 0 : 1) + (mpnOptions.length > 0 ? 1 : 0)}
                                 className="px-3 py-1.5 text-xs font-medium"
                               >
                                 <div className="flex items-center gap-2">
@@ -1229,6 +1265,11 @@ export function ProductVariantEditor({
                                     onChange={(e) => updateRow(row.id, { sku: e.target.value })}
                                   />
                                 </td>
+                                {mpnOptions.length > 0 && (
+                                  <td className="px-3 py-2">
+                                    <MpnSelect value={row.mpn} options={mpnOptions} onChange={(mpn) => updateRow(row.id, { mpn })} />
+                                  </td>
+                                )}
                                 <td className="px-3 py-2">
                                   <Input
                                     className="h-7 w-24 rounded-none"

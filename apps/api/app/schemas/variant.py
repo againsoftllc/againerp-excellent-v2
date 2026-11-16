@@ -56,6 +56,7 @@ class VariantUpsert(BaseModel):
     image_url: Optional[str] = None
     gallery_json: Optional[str] = None
     options_json: Optional[str] = None
+    mpn: Optional[str] = Field(default=None, max_length=200)
 
 
 class VariantBulkReplace(BaseModel):

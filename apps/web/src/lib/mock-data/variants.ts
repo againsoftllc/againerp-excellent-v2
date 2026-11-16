@@ -36,6 +36,8 @@ export type VariantMatrixRow = {
   gallery?: VariantGalleryItem[];
   /** "draft" = disabled/paused combo (kept, not deleted); "published" = sellable. */
   status?: "draft" | "published";
+  /** Manufacturer part number this variant uses (one of the product's MPN list). */
+  mpn?: string;
 };
 
 export type CatalogVariantRow = {

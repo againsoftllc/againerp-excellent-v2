@@ -1059,6 +1059,24 @@ def _active_special_price(db: Session, catalog_product_id: Optional[str]) -> Opt
     return Decimal(active.price) if active is not None else None
 
 
+def _product_mpns(db: Session, catalog_product_id: Optional[str]) -> list[str]:
+    """The product's manufacturer part numbers (CatalogProduct.mpns_json), blanks and repeats dropped."""
+    if not catalog_product_id:
+        return []
+    product = db.get(CatalogProduct, catalog_product_id)
+    raw = getattr(product, "mpns_json", None) if product else None
+    try:
+        data = json.loads(raw) if raw else []
+    except (TypeError, ValueError):
+        return []
+    out: list[str] = []
+    for value in data if isinstance(data, list) else []:
+        text_value = str(value or "").strip()
+        if text_value and text_value not in out:
+            out.append(text_value)
+    return out
+
+
 def _load_variants(
     db: Session,
     catalog_product_id: Optional[str],
@@ -1069,6 +1087,7 @@ def _load_variants(
 ) -> list[StorefrontVariantRead]:
     if not catalog_product_id:
         return []
+    mpns = _product_mpns(db, catalog_product_id)
     weights = weight_by_sku if weight_by_sku is not None else _load_shipping_meta(db, catalog_product_id)[1]
     rows = (
         db.query(CatalogProductVariant)
@@ -1118,9 +1137,23 @@ def _load_variants(
                 ),
                 options=options,
                 weight_kg=weight_kg,
+                # its own pick; with only one MPN on the product that one is everyone's
+                mpn=(row.mpn or "").strip() or (mpns[0] if len(mpns) == 1 else None),
             )
         )
     return out
+
+
+def _detail_mpn(db: Session, catalog_product_id: Optional[str], variants: list[StorefrontVariantRead]) -> Optional[str]:
+    """The MPN shown when no variant is picked: the product's only MPN, else the first one when there are no variants to
+    choose from, else the default variant's."""
+    mpns = _product_mpns(db, catalog_product_id)
+    if len(mpns) == 1:
+        return mpns[0]
+    if not variants:
+        return mpns[0] if mpns else None
+    default = next((v for v in variants if v.is_default), variants[0])
+    return default.mpn
 
 
 def _filter_specs_for_variants(
@@ -1433,6 +1466,7 @@ def _detail_from_ec(view, ec: EcommerceItem, db: Session) -> StorefrontProductDe
         seller_info=seller_info,
         source_url=source_url,
         variants=variants,
+        mpn=_detail_mpn(db, ec.catalog_product_id, variants),
         sale_ends_at=_load_sale_ends_at(db, ec.catalog_product_id),
         sales_volume=sales_volume,
         rating=rating,

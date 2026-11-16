@@ -71,6 +71,8 @@ class ProductBase(BaseModel):
     tags: List[str] = Field(default_factory=list)
     custom_specs_json: Optional[str] = None
     variant_attributes_json: Optional[str] = None
+    # Manufacturer part numbers, a JSON list of strings (each variant picks one).
+    mpns_json: Optional[str] = None
     combo_components_json: Optional[str] = None
     source_url: Optional[str] = Field(default=None, max_length=1000)
     seller_info_json: Optional[str] = None
@@ -139,6 +141,8 @@ class ProductUpdate(BaseModel):
     tags: Optional[List[str]] = None
     custom_specs_json: Optional[str] = None
     variant_attributes_json: Optional[str] = None
+    # Manufacturer part numbers, a JSON list of strings (each variant picks one).
+    mpns_json: Optional[str] = None
     combo_components_json: Optional[str] = None
     source_url: Optional[str] = Field(default=None, max_length=1000)
     seller_info_json: Optional[str] = None
@@ -181,6 +185,7 @@ class ProductVariantBrief(BaseModel):
     image_url: Optional[str] = None
     gallery_json: Optional[str] = None
     options_json: Optional[str] = None
+    mpn: Optional[str] = None
     external_sku_id: Optional[str] = None
 
 

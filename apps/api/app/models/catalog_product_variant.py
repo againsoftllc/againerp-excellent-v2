@@ -38,6 +38,8 @@ class CatalogProductVariant(Base):
     image_id: Mapped[Optional[str]] = mapped_column(String(36), ForeignKey("media.id", ondelete="SET NULL"), nullable=True)
     # Elim / external variation data
     options_json: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    # The manufacturer part number this variant uses (one of the product's mpns_json).
+    mpn: Mapped[Optional[str]] = mapped_column(String(200), nullable=True)
     external_sku_id: Mapped[Optional[str]] = mapped_column(String(100), nullable=True, index=True)
     image_url: Mapped[Optional[str]] = mapped_column(String(1000), nullable=True)
     created_at: Mapped[datetime] = mapped_column(

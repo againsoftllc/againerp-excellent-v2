@@ -4893,6 +4893,13 @@ def seed_opening_movements(db) -> int:
     return inserted
 
 
+def ensure_catalog_mpn_columns() -> None:
+    """MPN (manufacturer part number): the product's list and the one each variant uses."""
+    with engine.begin() as conn:
+        conn.execute(text("ALTER TABLE catalog_products ADD COLUMN IF NOT EXISTS mpns_json TEXT"))
+        conn.execute(text("ALTER TABLE catalog_product_variants ADD COLUMN IF NOT EXISTS mpn VARCHAR(200)"))
+
+
 def ensure_catalog_category_columns() -> None:
     """SkyBuy-style China keyword browse + Catalog vs Dropshipping channel split."""
     with engine.begin() as conn:
@@ -6500,6 +6507,7 @@ def main() -> None:
     ensure_catalog_attribute_filter_columns()
     ensure_catalog_review_columns()
     ensure_catalog_category_columns()
+    ensure_catalog_mpn_columns()
     ensure_catalog_brand_columns()
     ensure_product_columns()
     ensure_product_attribute_value_columns()

@@ -134,6 +134,8 @@ class StorefrontVariantRead(BaseModel):
     in_stock: Optional[bool] = None
     options: List[StorefrontVariantOptionRead] = Field(default_factory=list)
     weight_kg: Optional[float] = None
+    # Manufacturer part number of this variant (its own pick, else the product's only MPN).
+    mpn: Optional[str] = None
 
 
 class StorefrontPriceTierRead(BaseModel):
@@ -165,6 +167,8 @@ class StorefrontProductDetailRead(StorefrontProductRead):
     # product's own `category`/`category_slug` — lets the PDP breadcrumb
     # show the full tree instead of just the one leaf category.
     category_ancestors: List[StorefrontCategoryCrumbRead] = Field(default_factory=list)
+    # Manufacturer part number shown under the title (a variant's own replaces it when a variant is picked).
+    mpn: Optional[str] = None
     specifications: List[StorefrontSpecGroupRead] = Field(default_factory=list)
     gallery: List[str] = Field(default_factory=list)
     video_urls: List[str] = Field(default_factory=list)

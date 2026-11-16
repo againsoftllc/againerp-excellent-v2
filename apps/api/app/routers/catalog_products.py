@@ -424,6 +424,7 @@ def _product_read(
         tags=[] if lean else load_tags(row.tags_json),
         custom_specs_json=row.custom_specs_json,
         variant_attributes_json=getattr(row, "variant_attributes_json", None),
+        mpns_json=getattr(row, "mpns_json", None),
         combo_components_json=getattr(row, "combo_components_json", None),
         source_url=getattr(row, "source_url", None),
         seller_info_json=getattr(row, "seller_info_json", None),
@@ -458,6 +459,7 @@ def _variant_brief(variant: CatalogProductVariant, db: Optional[Session] = None)
         image_url=image_url,
         gallery_json=getattr(variant, "gallery_json", None),
         options_json=getattr(variant, "options_json", None),
+        mpn=getattr(variant, "mpn", None),
         external_sku_id=getattr(variant, "external_sku_id", None),
     )
 
@@ -671,6 +673,7 @@ def _replace_variants(
                 image_url=item.image_url,
                 gallery_json=item.gallery_json,
                 options_json=item.options_json,
+                mpn=(item.mpn or "").strip() or None,
             )
             db.add(row)
             db.flush()
@@ -692,6 +695,8 @@ def _replace_variants(
         row.is_default = item.is_default
         row.sort_order = item.sort_order if item.sort_order else idx
         row.options_json = item.options_json
+        if "mpn" in item.model_fields_set:
+            row.mpn = (item.mpn or "").strip() or None
 
     for vid, row in existing.items():
         if vid not in keep_ids:
@@ -1304,6 +1309,7 @@ def duplicate_product(
         thumbnail=source.thumbnail,
         custom_specs_json=source.custom_specs_json,
         variant_attributes_json=getattr(source, "variant_attributes_json", None),
+        mpns_json=getattr(source, "mpns_json", None),
         combo_components_json=getattr(source, "combo_components_json", None),
         source_url=getattr(source, "source_url", None),
         seller_info_json=getattr(source, "seller_info_json", None),
@@ -1344,6 +1350,7 @@ def duplicate_product(
                 is_default=variant.is_default,
                 sort_order=variant.sort_order,
                 image_id=variant.image_id,
+                mpn=variant.mpn,
             ),
         )
     if not variants:

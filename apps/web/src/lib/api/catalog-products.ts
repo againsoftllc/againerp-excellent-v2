@@ -62,6 +62,7 @@ export type ApiCatalogProduct = {
   tags: string[];
   custom_specs_json: string | null;
   variant_attributes_json?: string | null;
+  mpns_json?: string | null;
   combo_components_json?: string | null;
   source_url?: string | null;
   seller_info_json?: string | null;
@@ -89,6 +90,7 @@ export type ApiProductVariant = {
   image_url: string | null;
   gallery_json?: string | null;
   options_json?: string | null;
+  mpn?: string | null;
   external_sku_id?: string | null;
 };
 
@@ -168,6 +170,8 @@ export type ProductDetail = Product & {
   stockStatus: string | null;
   customSpecsJson: string | null;
   variantAttributesJson?: string | null;
+  /** Manufacturer part numbers (JSON list of strings); each variant picks one. */
+  mpnsJson?: string | null;
   comboComponentsJson?: string | null;
   sourceUrl?: string | null;
   sellerInfo?: ProductSellerInfo | null;
@@ -364,6 +368,7 @@ export function apiProductDetailToProduct(row: ApiProductDetail): ProductDetail 
     stockStatus: row.stock_status ?? null,
     customSpecsJson: row.custom_specs_json ?? null,
     variantAttributesJson: row.variant_attributes_json ?? null,
+    mpnsJson: row.mpns_json ?? null,
     comboComponentsJson: row.combo_components_json ?? null,
     sourceUrl: row.source_url ?? null,
     sellerInfo,
@@ -420,6 +425,7 @@ export type CreateCatalogProductInput = {
   last_selling_price?: number | null;
   custom_specs_json?: string | null;
   variant_attributes_json?: string | null;
+  mpns_json?: string | null;
   combo_components_json?: string | null;
   track_quantity?: boolean;
   stock_status?: string | null;
@@ -464,6 +470,7 @@ export type VariantUpsertInput = {
   image_url?: string | null;
   gallery_json?: string | null;
   options_json?: string | null;
+  mpn?: string | null;
 };
 
 function productPayload(input: CreateCatalogProductInput | UpdateCatalogProductInput) {
@@ -512,6 +519,7 @@ function productPayload(input: CreateCatalogProductInput | UpdateCatalogProductI
   if (input.tags !== undefined) payload.tags = input.tags;
   if (input.custom_specs_json !== undefined) payload.custom_specs_json = input.custom_specs_json;
   if (input.variant_attributes_json !== undefined) payload.variant_attributes_json = input.variant_attributes_json;
+  if (input.mpns_json !== undefined) payload.mpns_json = input.mpns_json;
   if (input.combo_components_json !== undefined) payload.combo_components_json = input.combo_components_json;
   if (input.track_quantity !== undefined) payload.track_quantity = input.track_quantity;
   if (input.stock_status !== undefined) payload.stock_status = input.stock_status;
@@ -571,6 +579,7 @@ export async function replaceProductVariants(
         image_url: v.image_url ?? null,
         gallery_json: v.gallery_json ?? null,
         options_json: v.options_json ?? null,
+        mpn: v.mpn ?? null,
       })),
     }),
   });
