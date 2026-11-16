@@ -1,8 +1,11 @@
 "use client";
 
-import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Check, ChevronDown, ChevronRight, Eye, EyeOff, Image, ListTree, Plus, RefreshCw, Star, Trash2, X } from "lucide-react";
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { Check, ChevronDown, ChevronRight, Eye, EyeOff, GripVertical, Image, ListTree, Plus, RefreshCw, Star, Trash2, X } from "lucide-react";
 import { toast } from "sonner";
+import { closestCenter, DndContext, PointerSensor, useSensor, useSensors, type DragEndEvent } from "@dnd-kit/core";
+import { arrayMove, horizontalListSortingStrategy, SortableContext, useSortable } from "@dnd-kit/sortable";
+import { CSS } from "@dnd-kit/utilities";
 import {
   buildVariantLabel,
   cartesianProduct,
@@ -498,6 +501,42 @@ function ChipListInput({
   );
 }
 
+/** One value chip that can be dragged (by its grip) to change the order of the values. */
+function SortableChip({
+  id,
+  draggable,
+  className,
+  children,
+}: {
+  id: string;
+  draggable: boolean;
+  className?: string;
+  children: ReactNode;
+}) {
+  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id });
+  return (
+    <div
+      ref={setNodeRef}
+      style={{ transform: CSS.Transform.toString(transform), transition, zIndex: isDragging ? 20 : undefined, opacity: isDragging ? 0.85 : 1 }}
+      className={className}
+    >
+      {draggable && (
+        <button
+          type="button"
+          className="cursor-grab touch-none text-muted-foreground hover:text-foreground active:cursor-grabbing"
+          title="Drag to change the order"
+          aria-label="Drag to change the order"
+          {...attributes}
+          {...listeners}
+        >
+          <GripVertical className="h-3 w-3" />
+        </button>
+      )}
+      {children}
+    </div>
+  );
+}
+
 /**
  * Chip-based value editor for one attribute (e.g. Color: Black, White, Red …).
  * Each chip carries an optional image, and can be expanded to define its own
@@ -514,6 +553,7 @@ function AttributeValuesEditor({
   onAddSubValue,
   onRemoveSubValue,
   onSetSubName,
+  onReorderValues,
 }: {
   dimension: VariantDimension;
   gallery: MediaLibraryItem[];
@@ -524,8 +564,20 @@ function AttributeValuesEditor({
   onAddSubValue: (value: string, subValue: string) => void;
   onRemoveSubValue: (value: string, subValue: string) => void;
   onSetSubName: (name: string) => void;
+  /** The values in their new order (the chips were dragged). */
+  onReorderValues: (ordered: string[]) => void;
 }) {
   const [draft, setDraft] = useState("");
+  const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 4 } }));
+  const handleDragEnd = (event: DragEndEvent) => {
+    const { active, over } = event;
+    if (!over || active.id === over.id) return;
+    const ids = dimension.values.map((x) => x.value);
+    const from = ids.indexOf(String(active.id));
+    const to = ids.indexOf(String(over.id));
+    if (from < 0 || to < 0) return;
+    onReorderValues(arrayMove(ids, from, to));
+  };
   const [expanded, setExpanded] = useState<string | null>(null);
 
   const submit = () => {
@@ -540,12 +592,16 @@ function AttributeValuesEditor({
   return (
     <div className="space-y-1.5">
       <div className="flex flex-wrap items-center gap-1.5">
+        <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
+        <SortableContext items={dimension.values.map((x) => x.value)} strategy={horizontalListSortingStrategy}>
         {dimension.values.map((v) => {
           const subCount = v.subValues?.length ?? 0;
           const isExpanded = expanded === v.value;
           return (
-            <div
+            <SortableChip
               key={v.value}
+              id={v.value}
+              draggable={dimension.values.length > 1}
               className={cn(
                 "inline-flex items-center gap-1 rounded-none border bg-muted/30 px-1.5 py-1 text-xs",
                 isExpanded ? "border-primary/60" : "border-input",
@@ -585,9 +641,11 @@ function AttributeValuesEditor({
               >
                 <X className="h-3 w-3" />
               </button>
-            </div>
+            </SortableChip>
           );
         })}
+        </SortableContext>
+        </DndContext>
         <input
           value={draft}
           onChange={(e) => setDraft(e.target.value)}
@@ -742,6 +800,33 @@ export function ProductVariantEditor({
         return { ...d, values: [...d.values, { value }] };
       }),
     );
+  };
+
+  /** Chips dragged: the values take the new order and the variant rows follow it (the storefront shows the same order). */
+  const reorderValues = (dimId: string, ordered: string[]) => {
+    const dim = dimensions.find((d) => d.id === dimId);
+    if (!dim) return;
+    const byValue = new Map(dim.values.map((v) => [v.value, v]));
+    const nextValues = ordered.map((x) => byValue.get(x)).filter((v): v is (typeof dim.values)[number] => Boolean(v));
+    if (nextValues.length !== dim.values.length) return;
+    const nextDimensions = dimensions.map((d) => (d.id === dimId ? { ...d, values: nextValues } : d));
+    setDimensions(nextDimensions);
+    const named = nextDimensions.filter((d) => d.name.trim());
+    const rank = (row: VariantMatrixRow) =>
+      named.map((d) => {
+        const i = d.values.findIndex((v) => v.value === row.dimensions[d.name]);
+        return i < 0 ? Number.MAX_SAFE_INTEGER : i;
+      });
+    const sorted = rows
+      .map((row, index) => ({ row, index, key: rank(row) }))
+      .sort((a, b) => {
+        for (let n = 0; n < a.key.length; n++) {
+          if (a.key[n] !== b.key[n]) return a.key[n] - b.key[n];
+        }
+        return a.index - b.index;
+      })
+      .map((x) => x.row);
+    setRows(sorted);
   };
 
   const removeValue = (dimId: string, value: string) => {
@@ -969,6 +1054,7 @@ export function ProductVariantEditor({
                   gallery={galleryMedia}
                   onAddValue={(value) => addValue(dim.id, value)}
                   onRemoveValue={(value) => removeValue(dim.id, value)}
+                  onReorderValues={(ordered) => reorderValues(dim.id, ordered)}
                   onSetValueImage={(value, imageId, imageUrl) => setValueImage(dim.id, value, imageId, imageUrl)}
                   onSetValueGallery={(value, items) => setValueGallery(dim.id, value, items)}
                   onAddSubValue={(value, subValue) => addSubValue(dim.id, value, subValue)}
