@@ -632,6 +632,49 @@ def _sse(event: str, data: dict) -> str:
     return f"event: {event}\ndata: {json.dumps(data)}\n\n"
 
 
+def _with_heartbeat(source, interval: float = 8.0):
+    """Pass the events of `source` through, and send an SSE comment (`: keep-alive`, ignored by the client) whenever nothing
+    came for `interval` seconds. A tool such as reading a whole product page keeps the model silent for ~45 s; proxies / load
+    balancers cut a connection that stays quiet that long, and the browser then showed "No response from the model"."""
+    import contextvars
+    import queue
+    import threading
+
+    box: "queue.Queue" = queue.Queue()
+    stop = threading.Event()
+    ctx = contextvars.copy_context()
+
+    def work() -> None:
+        try:
+            for item in source:
+                if stop.is_set():
+                    close = getattr(source, "close", None)
+                    if close:
+                        close()
+                    break
+                box.put(("item", item))
+            box.put(("done", None))
+        except BaseException as exc:  # noqa: BLE001 - handed to the reader, which re-raises it
+            box.put(("error", exc))
+
+    threading.Thread(target=lambda: ctx.run(work), daemon=True).start()
+    try:
+        while True:
+            try:
+                kind, value = box.get(timeout=interval)
+            except queue.Empty:
+                yield ": keep-alive\n\n"
+                continue
+            if kind == "item":
+                yield value
+            elif kind == "done":
+                return
+            else:
+                raise value
+    finally:
+        stop.set()  # the browser went away: the producer stops after the step it is on
+
+
 @router.post("/chat/stream")
 def chat_stream(
     payload: ChatRequest,
@@ -685,7 +728,7 @@ def chat_stream(
         pending_inputs: dict[str, dict[str, Any]] = {}
         yield _sse("conversation", {"conversation_id": convo.id})
         try:
-            yield from _drive_stream(text_parts, pending_inputs)
+            yield from _with_heartbeat(_drive_stream(text_parts, pending_inputs))
         except ProviderError as exc:
             # Headers are already sent (200) by this point — an HTTP status change isn't
             # possible mid-stream, so a provider failure becomes an explicit SSE event

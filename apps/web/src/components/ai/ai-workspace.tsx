@@ -758,7 +758,7 @@ export function AiWorkspace({
           },
           controller.signal,
         );
-        setMessages((m) => m.map((msg) => (msg.id === assistantId && !msg.content ? { ...msg, content: "No response from the model.", pending: false } : { ...msg, pending: false })));
+        setMessages((m) => m.map((msg) => (msg.id === assistantId && !msg.content ? { ...msg, content: "The connection closed before Aladin finished - a long task (reading a whole product page) can take a minute. Please send it again.", pending: false } : { ...msg, pending: false })));
       } catch (err) {
         const aborted = err instanceof DOMException && err.name === "AbortError";
         // The server rolled back a conversation it had just created (provider failure), or the
