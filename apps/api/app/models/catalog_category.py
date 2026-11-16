@@ -41,6 +41,8 @@ class CatalogCategory(Base):
     meta_keywords: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)
     # When true, storefront category page shows live price comparison / price list SEO.
     show_price_comparison: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    # Storefront filter panel: show this category's attribute-profile filters (price range + stock status always show).
+    show_attribute_filters: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True, server_default="true")
     icon_url: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)
     banner_url: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)
     icon_media_id: Mapped[Optional[str]] = mapped_column(String(36), nullable=True)

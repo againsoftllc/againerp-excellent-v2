@@ -4911,6 +4911,11 @@ def ensure_catalog_category_columns() -> None:
                 "ALTER TABLE catalog_categories ADD COLUMN IF NOT EXISTS show_price_comparison BOOLEAN NOT NULL DEFAULT TRUE"
             )
         )
+        conn.execute(
+            text(
+                "ALTER TABLE catalog_categories ADD COLUMN IF NOT EXISTS show_attribute_filters BOOLEAN NOT NULL DEFAULT TRUE"
+            )
+        )
         conn.execute(text("ALTER TABLE catalog_categories ADD COLUMN IF NOT EXISTS updated_by_id VARCHAR(36)"))
         conn.execute(text("ALTER TABLE catalog_categories ADD COLUMN IF NOT EXISTS updated_by_name VARCHAR(255)"))
         # One-time legacy backfill: only when no row is tagged with either channel yet.

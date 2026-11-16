@@ -18,6 +18,8 @@ export type Category = {
   showInTopMenu: boolean;
   /** Storefront: show live price comparison / price list under PLP */
   showPriceComparison?: boolean;
+  /** Storefront filter panel: show this category's attribute-profile filters (price range + stock status always show) */
+  showAttributeFilters?: boolean;
   updatedAt: string;
   /** who last changed it (shown in the Updated By column) */
   updatedBy?: string;

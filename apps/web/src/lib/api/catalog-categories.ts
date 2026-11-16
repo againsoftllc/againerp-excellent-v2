@@ -19,6 +19,7 @@ export type ApiCatalogCategory = {
   meta_description: string | null;
   meta_keywords: string | null;
   show_price_comparison?: boolean;
+  show_attribute_filters?: boolean;
   icon_url: string | null;
   banner_url: string | null;
   icon_media_id: string | null;
@@ -53,6 +54,7 @@ export function apiCategoryToCategory(row: ApiCatalogCategory): Category {
     active: row.is_active,
     showInTopMenu: row.show_in_top_menu,
     showPriceComparison: row.show_price_comparison !== false,
+    showAttributeFilters: row.show_attribute_filters !== false,
     updatedAt: row.updated_at.slice(0, 10),
     updatedBy: row.updated_by_name ?? undefined,
     description: row.description ?? undefined,
@@ -76,6 +78,7 @@ export type CreateCatalogCategoryInput = {
   active?: boolean;
   showInTopMenu?: boolean;
   showPriceComparison?: boolean;
+  showAttributeFilters?: boolean;
   description?: string;
   metaTitle?: string;
   metaDescription?: string;
@@ -99,6 +102,9 @@ function categoryInputToApiPayload(input: CreateCatalogCategoryInput | UpdateCat
   if ("active" in input && input.active !== undefined) payload.is_active = input.active;
   if ("showInTopMenu" in input && input.showInTopMenu !== undefined) {
     payload.show_in_top_menu = input.showInTopMenu;
+  }
+  if ("showAttributeFilters" in input && input.showAttributeFilters !== undefined) {
+    payload.show_attribute_filters = input.showAttributeFilters;
   }
   if ("showPriceComparison" in input && input.showPriceComparison !== undefined) {
     payload.show_price_comparison = input.showPriceComparison;
@@ -148,6 +154,9 @@ export function partialCategoryToApiUpdate(data: Partial<Category>): UpdateCatal
   if (data.showInTopMenu !== undefined) input.showInTopMenu = data.showInTopMenu;
   if (data.showPriceComparison !== undefined) {
     input.showPriceComparison = data.showPriceComparison;
+  }
+  if (data.showAttributeFilters !== undefined) {
+    input.showAttributeFilters = data.showAttributeFilters;
   }
   if (data.description !== undefined) input.description = data.description;
   if (data.metaTitle !== undefined) input.metaTitle = data.metaTitle;

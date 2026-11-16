@@ -715,7 +715,12 @@ class StorefrontCatalogService:
                 if pid
             ]
 
-        attributes = self._attribute_facets(product_ids_for, resolved_category_id)
+        # A category can switch its attribute-profile filters off (Catalog > Categories); the price range
+        # and stock status are not attribute filters, so they stay.
+        attributes: List[dict] = []
+        browsed = self._db.get(CatalogCategory, resolved_category_id) if resolved_category_id else None
+        if browsed is None or getattr(browsed, "show_attribute_filters", True):
+            attributes = self._attribute_facets(product_ids_for, resolved_category_id)
 
         return {
             "brands": brands,
@@ -1146,6 +1151,9 @@ class StorefrontCatalogService:
                     "parent_id": category.parent_id,
                     "show_price_comparison": bool(
                         getattr(category, "show_price_comparison", True)
+                    ),
+                    "show_attribute_filters": bool(
+                        getattr(category, "show_attribute_filters", True)
                     ),
                 },
             }

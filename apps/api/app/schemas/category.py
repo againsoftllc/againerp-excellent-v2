@@ -19,6 +19,7 @@ class CategoryBase(BaseModel):
     meta_description: Optional[str] = None
     meta_keywords: Optional[str] = None
     show_price_comparison: bool = True
+    show_attribute_filters: bool = True
     icon_url: Optional[str] = None
     banner_url: Optional[str] = None
     icon_media_id: Optional[str] = None
@@ -46,6 +47,7 @@ class CategoryUpdate(BaseModel):
     meta_description: Optional[str] = None
     meta_keywords: Optional[str] = None
     show_price_comparison: Optional[bool] = None
+    show_attribute_filters: Optional[bool] = None
     icon_url: Optional[str] = None
     banner_url: Optional[str] = None
     icon_media_id: Optional[str] = None

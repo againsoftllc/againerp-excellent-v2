@@ -555,6 +555,7 @@ class StorefrontCategoryResolve(BaseModel):
     china_search_keyword: Optional[str] = None
     parent_id: Optional[str] = None
     show_price_comparison: bool = True
+    show_attribute_filters: bool = True
 
 
 class StorefrontBrandResolve(BaseModel):

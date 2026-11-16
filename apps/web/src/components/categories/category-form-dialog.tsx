@@ -55,6 +55,7 @@ export function CategoryFormDialog({
   const [active, setActive] = useState(true);
   const [showInTopMenu, setShowInTopMenu] = useState(false);
   const [showPriceComparison, setShowPriceComparison] = useState(true);
+  const [showAttributeFilters, setShowAttributeFilters] = useState(true);
   const [parentId, setParentId] = useState<string | null>(null);
   const [iconUrl, setIconUrl] = useState<string | undefined>();
   const [bannerUrl, setBannerUrl] = useState<string | undefined>();
@@ -90,6 +91,7 @@ export function CategoryFormDialog({
       setActive(category?.active ?? true);
       setShowInTopMenu(category?.showInTopMenu ?? false);
       setShowPriceComparison(category?.showPriceComparison !== false);
+      setShowAttributeFilters(category?.showAttributeFilters !== false);
       setParentId(category?.parentId ?? defaultParentId ?? null);
       setIconUrl(category?.iconUrl);
       setBannerUrl(category?.bannerUrl);
@@ -162,6 +164,7 @@ export function CategoryFormDialog({
       active,
       showInTopMenu,
       showPriceComparison,
+      showAttributeFilters,
       description,
       metaTitle: String(fd.get("metaTitle") ?? ""),
       metaDescription: String(fd.get("metaDescription") ?? ""),
@@ -319,6 +322,24 @@ export function CategoryFormDialog({
                     checked={showPriceComparison}
                     onCheckedChange={setShowPriceComparison}
                     aria-label="Show price comparison"
+                    className={cn(
+                      "peer inline-flex h-5 w-9 shrink-0 cursor-pointer items-center rounded-full border-2 border-transparent shadow-sm transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring data-[state=unchecked]:bg-input data-[state=checked]:bg-emerald-600",
+                    )}
+                  >
+                    <SwitchPrimitive.Thumb className="pointer-events-none block h-4 w-4 rounded-full bg-background shadow-lg ring-0 transition-transform data-[state=checked]:translate-x-4 data-[state=unchecked]:translate-x-0" />
+                  </SwitchPrimitive.Root>
+                </div>
+                <div className="mt-3 flex h-8 items-center justify-between gap-2 rounded-none border border-input bg-background px-2.5">
+                  <div className="min-w-0">
+                    <p className="text-xs font-medium text-foreground">Show attribute filters</p>
+                    <p className="text-[10px] text-muted-foreground">
+                      Attribute-profile filters on this category page. Price range and stock status always show.
+                    </p>
+                  </div>
+                  <SwitchPrimitive.Root
+                    checked={showAttributeFilters}
+                    onCheckedChange={setShowAttributeFilters}
+                    aria-label="Show attribute filters"
                     className={cn(
                       "peer inline-flex h-5 w-9 shrink-0 cursor-pointer items-center rounded-full border-2 border-transparent shadow-sm transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring data-[state=unchecked]:bg-input data-[state=checked]:bg-emerald-600",
                     )}

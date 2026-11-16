@@ -252,6 +252,7 @@ def create_category(
         meta_description=payload.meta_description,
         meta_keywords=payload.meta_keywords,
         show_price_comparison=payload.show_price_comparison,
+        show_attribute_filters=payload.show_attribute_filters,
         icon_url=payload.icon_url,
         banner_url=payload.banner_url,
         icon_media_id=payload.icon_media_id,
