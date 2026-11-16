@@ -1157,12 +1157,25 @@ def _leftover_custom_json(db: Session, profile_id: str, specs: SourceSpecs, used
     """The source rows the profile has NO attribute for, as this product's custom specs - same groups, source order.
     `used`: normalised labels of rows a profile attribute already took under its own name (CPU <- Processor Model)."""
     names = {_norm(f["name"]) for f in profile_fields(db, profile_id)} | (used or set())
+    # the profile's own groups: a leftover row of a source group that is named like one of them goes INTO that group (as this
+    # product's own attribute) - a second, product-only group with the same name would show the group twice
+    profile_groups = {
+        _norm(pg.name): pg.id
+        for pg in db.query(CatalogAttributeGroup)
+        .filter(CatalogAttributeGroup.profile_id == profile_id, CatalogAttributeGroup.is_active.is_(True))
+        .order_by(CatalogAttributeGroup.sort_order.asc())
+        .all()
+    }
     groups, attrs = [], []
     prev: Optional[str] = ""  # "" = the first group of the source
     for gi, g in enumerate(_clean_specs(specs)):
         rest = [i for i in g["items"] if _norm(i["label"]) not in names]
         before, prev = prev, g["group"]
         if not rest:
+            continue
+        existing_group = profile_groups.get(_norm(g["group"]))
+        if existing_group:
+            attrs += [{"id": f"ai-attr-{gi}-{ii}", "groupId": existing_group, "name": i["label"], "value": i["value"]} for ii, i in enumerate(rest)]
             continue
         groups.append({"id": f"ai-{gi}", "name": g["group"], "after": before})  # `after`: the source group just before this one
         attrs += [{"id": f"ai-attr-{gi}-{ii}", "groupId": f"ai-{gi}", "name": i["label"], "value": i["value"]} for ii, i in enumerate(rest)]

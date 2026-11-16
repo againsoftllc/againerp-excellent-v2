@@ -150,6 +150,27 @@ export function ProductSpecEditor({ initialProfileId, initialValues, initialDisp
     [profileId, groups],
   );
 
+  /* A product-only group named like one of the profile's groups ("Ports & Slots" twice) is folded into that group: its attributes
+     stay this product's own, but the group is shown once. */
+  useEffect(() => {
+    if (!profileGroups.length || !customGroups.length) return;
+    const norm = (s: string) => s.trim().toLowerCase().replace(/\s+/g, " ");
+    const byName = new Map(profileGroups.map((g) => [norm(g.name), g.id]));
+    const dup = customGroups.filter((cg) => byName.has(norm(cg.name)));
+    if (!dup.length) return;
+    const nextLocal = { ...localAttrs };
+    for (const cg of dup) {
+      const target = byName.get(norm(cg.name))!;
+      nextLocal[target] = [...(nextLocal[target] ?? []), ...(nextLocal[cg.id] ?? [])];
+      delete nextLocal[cg.id];
+    }
+    const nextGroups = customGroups.filter((cg) => !dup.includes(cg));
+    setCustomGroups(nextGroups);
+    setLocalAttrs(nextLocal);
+    emitChange(values, nextGroups, nextLocal);
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- only when the groups change; emitChange reads the latest state through its arguments
+  }, [profileGroups, customGroups]);
+
   const defaultAttrOrder = useMemo(() => {
     const ao: Record<string, string[]> = {};
     for (const g of profileGroups) {
