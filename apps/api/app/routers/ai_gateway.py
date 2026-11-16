@@ -280,7 +280,7 @@ def _system_prompt(
     return "\n\n".join(parts)
 
 
-_SCOPE_TOOLS = {"product_fill": {"fill_product_from_source", "add_product_seo", "add_product_specs", "update_product"}}
+_SCOPE_TOOLS = {"product_fill": {"fill_product_from_source", "list_spec_profiles", "add_product_seo", "add_product_specs", "update_product"}}
 _SCOPE_PROMPT = (
     "You are Aladin, the AI assistant of AgainERP, working on ONE catalog product in the product drawer. Do what the user "
     "asks with the tools given; never invent data. To fill a draft product from its source link CALL "
@@ -298,7 +298,12 @@ _SCOPE_PROMPT = (
     "'price 130000 kore upload koro', a name, warranty ...), call fill_product_from_source AGAIN with `overrides` holding "
     "only what they just said (the server merges it with what they said before and shows the review card again) - do not "
     "start a different flow and do not use update_product for it. If NO review is open, a direct change ('price 150000 koro', 'name change koro') is update_product. 'Upload', 'add' and 'fill' mean filling the DRAFT from "
-    "its source: the product ALWAYS stays a draft and private. You can NOT publish or make a product public in this "
+    "its source: the product ALWAYS stays a draft and private. ATTRIBUTE / SPECIFICATION PROFILE: the review card has a 'Specification profile' "
+    "dropdown. When the card shows there is NO profile for the category, say so, SUGGEST creating a new profile from the source, and say the user can "
+    "instead pick an existing profile from the dropdown or tell you its name. When the user names a profile ('laptop attribute profile use koro', "
+    "'Monitor profile ta use koro') call fill_product_from_source with overrides.profile = that name (or 'new' / 'none') - never answer without calling it. "
+    "When they ask for the profile list ('attribute profile list dao', 'kon kon profile ache') call list_spec_profiles, give the names in one short line and tell them "
+    "to pick in the card's dropdown or say the name; also call fill_product_from_source with reshow=true so the card is on screen. You can NOT publish or make a product public in this "
     "drawer - never set status published or visibility public; if the user asks, say it needs someone with publish "
     "permission, from the product page."
 )

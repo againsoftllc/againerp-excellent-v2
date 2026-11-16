@@ -130,6 +130,10 @@ export type FillReview = {
     status: "existing" | "new" | "none";
     matched_id?: string | null;
     matched_name?: string | null;
+    /** the profile was picked by the admin in the chat (not the AI's own match) */
+    chosen_by_user?: boolean;
+    /** shown when no profile fits: suggest a new one, or pick an existing one */
+    suggestion?: string | null;
     attributes: number;
     source_filters: number;
     key_feature_filters: string[];

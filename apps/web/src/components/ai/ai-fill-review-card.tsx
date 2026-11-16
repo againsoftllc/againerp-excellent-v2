@@ -145,14 +145,22 @@ export function AiFillReviewCard({
           className="h-8 w-full rounded-md border border-input bg-background px-2 text-xs"
         >
           <option value="none">No profile - keep the specifications on this product only</option>
-          {profile.attributes > 0 ? <option value="new">Create a new profile from the source ({profile.attributes} attributes)</option> : null}
+          {profile.attributes > 0 ? (
+            <option value="new">
+              Create a new profile from the source ({profile.attributes} attributes)
+              {profile.status === "new" && !profile.chosen_by_user ? "  (suggested)" : ""}
+            </option>
+          ) : null}
           {profiles.map((p) => (
             <option key={p.id} value={p.id}>
               {p.name}
-              {p.id === profile.matched_id ? "  (AI choice)" : ""}
+              {p.id === profile.matched_id ? (profile.chosen_by_user ? "  (your choice)" : "  (AI choice)") : ""}
             </option>
           ))}
         </select>
+        {profile.suggestion ? (
+          <p className="rounded-md bg-amber-500/10 px-2 py-1.5 text-[11px] text-amber-700 dark:text-amber-300">{profile.suggestion}</p>
+        ) : null}
         <p className="text-[11px] text-muted-foreground">
           {profile.attributes
             ? `${profile.attributes} specification rows were found on the source page.`

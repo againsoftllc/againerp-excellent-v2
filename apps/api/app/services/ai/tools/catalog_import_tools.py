@@ -21,6 +21,7 @@ Two-step like every other action tool:
 
 from __future__ import annotations
 
+import json
 import re
 import time
 from decimal import Decimal
@@ -165,21 +166,44 @@ def _spec_preview(db: Session, extracted: CatalogAiExtractResponse) -> dict:
         return {"found_on_page": 0}
     names = [c.name for cid in extracted.matched_category_ids if (c := db.get(CatalogCategory, cid)) is not None]
     profile = spec_profile_service.find_profile(db, category_names=[*names, d.category_name or "", *d.category_names])
+    chosen = (_overrides.get(d.source_url or "", {}) or {}).get("profile")  # named by the user in the chat
+    if chosen == "none":
+        return {
+            "found_on_page": count,
+            "groups": [g.group for g in d.specifications],
+            "profile": None,
+            "plan": "As you chose: no attribute profile - the specs stay on this product only.",
+        }
+    if chosen == "new":
+        return {
+            "found_on_page": count,
+            "groups": [g.group for g in d.specifications],
+            "profile": None,
+            "plan": f"As you chose: a NEW attribute profile is created from the {count} attributes on the page.",
+        }
+    if chosen:
+        picked = db.get(CatalogAttributeProfile, chosen)
+        if picked is not None:
+            profile = picked
     if profile is not None:
         return {
             "found_on_page": count,
             "groups": [g.group for g in d.specifications],
             "profile": profile.name,
-            "plan": f"Will be filled into the existing '{profile.name}' specification profile.",
+            "plan": (
+                f"Will be filled into the {'chosen' if chosen else 'existing'} '{profile.name}' attribute profile."
+                + ("" if chosen else " To use a different profile, tell me its name.")
+            ),
         }
     return {
         "found_on_page": count,
         "groups": [g.group for g in d.specifications],
         "profile": None,
         "plan": (
-            f"No specification profile exists for '{d.category_name or 'this product'}'. The specs are kept as "
-            "custom specs; after import I will ask for approval to create a profile from them."
+            f"No attribute profile matches '{d.category_name or 'this product'}'. Suggestion: create a new profile from the {count} "
+            "attributes on the page. Or choose an existing attribute profile by telling me its name."
         ),
+        "existing_profiles": [p.name for p in _all_profiles(db)][:30],
     }
 
 
@@ -277,10 +301,30 @@ def fill_review(db: Session, company_id: Optional[str], row: CatalogProduct, ext
     n_specs = spec_profile_service.spec_item_count(specs)
     cat_names = [c.name for cid in extracted.matched_category_ids if (c := db.get(CatalogCategory, cid)) is not None]
     profile = spec_profile_service.find_profile(db, category_names=[*cat_names, d.category_name or "", *d.category_names]) if n_specs else None
+    # the profile the user named in the chat (or "new" / "none") replaces the AI's own pick
+    chosen = (_overrides.get(d.source_url or "", {}) or {}).get("profile")
+    forced: Optional[str] = None
+    if chosen == "none":
+        profile, forced = None, "none"
+    elif chosen == "new":
+        profile, forced = None, "new"
+    elif chosen:
+        picked = db.get(CatalogAttributeProfile, chosen)
+        if picked is not None:
+            profile = picked
     unmatched = (
         spec_profile_service.unmatched_filters(spec_profile_service.profile_fields(db, profile.id), d.source_filters or [])
         if profile is not None else []
     )
+    where = d.category_name or (cat_names[0] if cat_names else "") or "this category"
+    suggestion = None
+    if profile is None and not forced:
+        suggestion = (
+            f"No attribute profile matches '{where}'. Suggestion: create a new profile from the {n_specs} attributes on the source page. "
+            "Or pick an existing attribute profile from the dropdown (or tell me its name)."
+            if n_specs
+            else "No specification table was found on the source page, so there is nothing to put in a profile."
+        )
     desc = re.sub(r"\s+", " ", re.sub(r"<[^>]+>", " ", clean(d.description or "") or "")).strip()  # plain text, no tags
     short = [ln.strip(" -•\t") for ln in (clean(d.short_description or "") or "").splitlines() if ln.strip(" -•\t")]
     return {
@@ -301,9 +345,11 @@ def fill_review(db: Session, company_id: Optional[str], row: CatalogProduct, ext
             "new_level": next((w for w in extracted.warnings if w.startswith("Category '") and "will be created under" in w), None),
         },
         "profile": {
-            "status": "existing" if profile is not None else ("new" if n_specs else "none"),
+            "status": "existing" if profile is not None else (forced or ("new" if n_specs else "none")),
             "matched_id": profile.id if profile is not None else None,
             "matched_name": profile.name if profile is not None else None,
+            "chosen_by_user": bool(chosen and (profile is not None or forced)),
+            "suggestion": suggestion,
             "attributes": n_specs,
             "source_filters": len(d.source_filters or []),
             "key_feature_filters": [u["title"] for u in unmatched],
@@ -366,8 +412,77 @@ def apply_fill(
 
 # What the admin said in the chat while a review was open ("price 130000"): kept per source URL and laid over the
 # extraction every time it is shown or applied, so a later message adds to the earlier context instead of replacing it.
-_OVERRIDABLE = ("price", "compare_at_price", "name", "model", "warranty", "origin", "stock_status")
+_OVERRIDABLE = ("price", "compare_at_price", "name", "model", "warranty", "origin", "stock_status", "profile")
 _overrides: dict[str, dict] = {}
+
+# --- the specification profile the user names in the chat ("laptop attribute profile use koro") -------------------------------
+# The review card has a dropdown of every profile; these let the user do the same in words: the name is matched to an existing
+# profile (or "new" = create one from the source, "none" = keep the specs on the product only) and laid over the review.
+_PROFILE_FILLER = {
+    "attribute", "attributes", "specification", "specifications", "spec", "specs", "profile", "profiles", "use", "koro", "kore",
+    "dao", "select", "choose", "the", "a", "an", "er", "ta", "ti", "ke", "diye", "niye", "ei", "this", "that", "please",
+}
+
+
+def _profile_tokens(text: str) -> list[str]:
+    out: list[str] = []
+    for word in re.findall(r"[a-z0-9]+", (text or "").lower()):
+        if word in _PROFILE_FILLER:
+            continue
+        out.append(word[:-1] if len(word) > 3 and word.endswith("s") else word)  # Laptops = Laptop
+    return out
+
+
+def match_profile_choice(profiles: list[tuple[str, str]], text: str) -> Optional[str]:
+    """A profile id, "new" or "none" for what the user wrote - or None when no single profile fits it.
+    `profiles` = [(id, name)]. Same words in any order beat 'contains all the words'; a tie is not guessed."""
+    raw = (text or "").strip()
+    low = raw.lower()
+    if low in {"new", "create", "create new", "new profile", "create a new profile", "notun"}:
+        return "new"
+    if low in {"none", "no profile", "no", "skip"}:
+        return "none"
+    for pid, _name in profiles:
+        if raw == pid:
+            return pid
+    tokens = _profile_tokens(raw)
+    if not tokens:
+        return None
+    want = set(tokens)
+    named = [(pid, set(_profile_tokens(name))) for pid, name in profiles]
+    exact = [pid for pid, words in named if words == want]
+    if exact:
+        return exact[0]
+    containing = [(pid, words) for pid, words in named if want <= words]
+    if len(containing) == 1:
+        return containing[0][0]
+    if containing:
+        fewest = min(len(words) for _pid, words in containing)
+        best = [pid for pid, words in containing if len(words) == fewest]
+        return best[0] if len(best) == 1 else None
+    return None
+
+
+def _all_profiles(db: Session) -> list[CatalogAttributeProfile]:
+    return (
+        db.query(CatalogAttributeProfile)
+        .filter(CatalogAttributeProfile.is_active.is_(True))
+        .order_by(CatalogAttributeProfile.sort_order.asc(), CatalogAttributeProfile.name.asc())
+        .all()
+    )
+
+
+def resolve_profile_choice(db: Session, text: str) -> tuple[Optional[str], list[str]]:
+    """(profile id | "new" | "none" | None, the names of every profile)."""
+    profiles = _all_profiles(db)
+    return match_profile_choice([(p.id, p.name) for p in profiles], text), [p.name for p in profiles]
+
+
+def _profile_name(db: Session, choice: Optional[str]) -> Optional[str]:
+    if not choice or choice in ("new", "none"):
+        return None
+    p = db.get(CatalogAttributeProfile, choice)
+    return p.name if p is not None else None
 
 
 def _apply_overrides(extracted: CatalogAiExtractResponse, ov: dict) -> CatalogAiExtractResponse:
@@ -404,6 +519,30 @@ def drop_extracted(url: str) -> None:
     _overrides.pop(url, None)
 
 
+def _profile_line(profile: dict) -> str:
+    """What the assistant's reply must say about the specification profile of a review (the card has the dropdown)."""
+    name = profile.get("matched_name")
+    status = profile.get("status")
+    if profile.get("chosen_by_user"):
+        if status == "existing" and name:
+            return f"The user chose the '{name}' attribute profile - say that it is selected in the card."
+        if status == "new":
+            return "The user chose to create a NEW attribute profile from the source - say that it is selected in the card."
+        return "The user chose to keep the specifications on the product only (no profile) - say that it is selected in the card."
+    if status == "existing" and name:
+        return (
+            f"Say which attribute profile the AI connected: '{name}'. They can change it with the 'Specification profile' dropdown "
+            "in the card, or tell you another profile's name."
+        )
+    if status == "new":
+        return (
+            "There is NO attribute profile for this category: say so, SUGGEST creating a new profile from the source (it is "
+            "pre-selected in the card), and say that instead they can pick an existing attribute profile from the 'Specification "
+            "profile' dropdown in the card or tell you its name (you can list them with list_spec_profiles)."
+        )
+    return "The source page has no specification table, so no attribute profile is used."
+
+
 def build_catalog_import_tools(*, db: Session | None, company_id: str | None, user: Any | None) -> list[OrchestratorTool]:
     def import_product_from_url(inp: dict) -> dict:
         if not _can_write_catalog(db, user):
@@ -413,7 +552,18 @@ def build_catalog_import_tools(*, db: Session | None, company_id: str | None, us
             return {"error": "A full product page URL (starting with http:// or https://) is required."}
 
         confirming = bool(inp.get("confirm"))
-        extracted = _cache_get(url) if confirming else None
+        said_profile = str(inp.get("profile") or "").strip()
+        if said_profile:
+            # the user named an attribute profile in the chat: an existing one (by name), "new" or "none"
+            choice, names = resolve_profile_choice(db, said_profile)  # type: ignore[arg-type]
+            if choice is None:
+                return {
+                    "error": f"No single attribute profile matches '{said_profile}'.",
+                    "profiles": names[:60],
+                    "note": "Tell the user in one line that no profile has that name, list the closest names from 'profiles', and ask which one to use - or whether to create a new one from the page.",
+                }
+            _overrides[url] = {**_overrides.get(url, {}), "profile": choice}
+        extracted = _cache_get(url) if (confirming or said_profile) else None
         if extracted is None:
             try:
                 extracted = extract_from_url(db, url, company_id=company_id)  # type: ignore[arg-type]
@@ -430,7 +580,11 @@ def build_catalog_import_tools(*, db: Session | None, company_id: str | None, us
         if not confirming:
             preview = _preview(db, company_id, extracted)  # type: ignore[arg-type]
             _cache_set(url, extracted)
-            return {"status": "preview", "preview": preview, "note": CONFIRM_NOTE}
+            return {
+                "status": "preview",
+                "preview": preview,
+                "note": CONFIRM_NOTE + " ATTRIBUTE PROFILE: say in the same message which attribute profile the preview connects (specifications.plan). If none fits (specifications.existing_profiles), SUGGEST creating a new one from the page and tell the user they can instead choose an existing profile by name - when they name one, call this tool again with the same url and profile=<name> (still without confirm).",
+            }
 
         payload = CatalogAiCreateRequest(
             draft=extracted.draft,
@@ -443,8 +597,12 @@ def build_catalog_import_tools(*, db: Session | None, company_id: str | None, us
             status="draft",
         )
         _extract_cache.pop(url, None)
+        chosen_profile = _overrides.pop(url, {}).get("profile")  # what the user named in the chat goes with the product
         try:
-            row = create_product_from_draft(db, payload, user)  # type: ignore[arg-type]
+            row = create_product_from_draft(
+                db, payload, user,  # type: ignore[arg-type]
+                create_spec_profile=(chosen_profile == "new"), spec_profile_id=chosen_profile or None,
+            )
         except HTTPException as exc:
             db.rollback()  # type: ignore[union-attr] — undo any partial flush (e.g. a resolved/created brand or category) before the gateway's own end-of-turn commit would otherwise persist it
             return {"error": exc.detail}
@@ -871,10 +1029,20 @@ def build_catalog_import_tools(*, db: Session | None, company_id: str | None, us
         confirming = bool(inp.get("confirm"))
         said = inp.get("overrides") if isinstance(inp.get("overrides"), dict) else {}
         said = {k: v for k, v in said.items() if k in _OVERRIDABLE and v not in (None, "")}
+        if "profile" in said:
+            # the user named a profile in the chat: an existing one (by name), "new" or "none" - anything else is asked back
+            choice, names = resolve_profile_choice(db, str(said["profile"]))  # type: ignore[arg-type]
+            if choice is None:
+                return {
+                    "error": f"No single attribute profile matches '{said['profile']}'.",
+                    "profiles": names[:60],
+                    "note": "Tell the user in one line that no profile has that name, list the closest names from 'profiles' (all of them if there are few), and ask which one to use - or whether to create a new one from the source.",
+                }
+            said["profile"] = choice
         if said:
             _overrides[url] = {**_overrides.get(url, {}), **said}  # later messages ADD to the earlier ones
-        # a follow-up with changes re-uses the page that was already read (no second scrape / AI run)
-        extracted = _cache_get(url) if (confirming or said) else None
+        # a follow-up with changes (or 'show the card again') re-uses the page that was already read (no second scrape / AI run)
+        extracted = _cache_get(url) if (confirming or said or inp.get("reshow")) else None
         if extracted is None:
             try:
                 extracted = extract_from_url(db, url, company_id=company_id)  # type: ignore[arg-type]
@@ -895,8 +1063,10 @@ def build_catalog_import_tools(*, db: Session | None, company_id: str | None, us
             new_things.append(f"category '{d.category_name}'")
         has_specs = bool(spec_profile_service.spec_item_count(spec_profile_service.specs_from_draft(d)))
         cat_for_profile = d.category_name or row.category
+        picked_profile = _overrides.get(url, {}).get("profile")  # the profile the user named in the chat, if any
         needs_profile = bool(
-            has_specs and cat_for_profile and spec_profile_service.find_profile(db, category_names=[cat_for_profile]) is None  # type: ignore[arg-type]
+            has_specs and cat_for_profile
+            and (picked_profile == "new" or (picked_profile is None and spec_profile_service.find_profile(db, category_names=[cat_for_profile]) is None))  # type: ignore[arg-type]
         )
         if needs_profile:
             n_attr = spec_profile_service.spec_item_count(spec_profile_service.specs_from_draft(d))
@@ -905,24 +1075,26 @@ def build_catalog_import_tools(*, db: Session | None, company_id: str | None, us
         if not confirming:
             # Always review first: what the AI collected from the source and what it will be connected to.
             _cache_set(url, extracted)
+            review = fill_review(db, company_id, row, extracted)  # type: ignore[arg-type]
             return {
                 "status": "preview",
                 # the drawer shows this as a review card (gallery, price / old price, category / brand / specification
                 # profile pickers the admin can change) with Accept / Deny - nothing more to show in words
-                "review": fill_review(db, company_id, row, extracted),  # type: ignore[arg-type]
+                "review": review,
                 "needs_approval": (f"This will create: {', '.join(new_things)}. " if new_things else "")
                 + "The admin can pick existing ones in the card.",
                 "product": {"id": row.id, "name": row.name},
                 "note": (
                     "Nothing was saved. A review card with all the collected data is now shown to the user, who "
-                    "approves it there. Reply with ONE short line asking them to check it and press Accept - do NOT "
-                    "repeat the details. Call again with confirm=true only if the user explicitly agrees in words."
+                    "approves it there. Reply with a SHORT message asking them to check it and press Accept - do NOT "
+                    "repeat the details. " + _profile_line(review["profile"]) +
+                    " Call again with confirm=true only if the user explicitly agrees in words."
                 ),
             }
         _extract_cache.pop(url, None)
-        _overrides.pop(url, None)
+        chosen_profile = _overrides.pop(url, {}).get("profile")  # the profile the user named in the chat goes with the fill
         try:
-            row = apply_fill(db, user, company_id, row, extracted)  # type: ignore[arg-type]
+            row = apply_fill(db, user, company_id, row, extracted, profile_id=chosen_profile)  # type: ignore[arg-type]
         except HTTPException as exc:
             db.rollback()  # type: ignore[union-attr]
             return {"error": exc.detail}
@@ -939,6 +1111,31 @@ def build_catalog_import_tools(*, db: Session | None, company_id: str | None, us
             "images_kept": getattr(row, "_images_reused", 0), "image_warnings": getattr(row, "_image_warnings", []),
             "specifications": _spec_result(row, extracted),
             "note": "Tell the user briefly what was filled (price/offer, brand, category, images, specs, description, SEO) and that the product stays a draft. To link the product use EXACTLY the doc_link value as the markdown link target (never invent a /catalog path).",
+        }
+
+    def list_spec_profiles(inp: dict) -> dict:
+        if db is None:
+            return {"error": "No database session."}
+        query = str(inp.get("query") or "").strip()
+        want = set(_profile_tokens(query))
+        out = []
+        for p in _all_profiles(db):  # type: ignore[arg-type]
+            if want and not (want <= set(_profile_tokens(p.name))):
+                continue
+            try:
+                labels = json.loads(p.category_labels or "[]")
+            except (TypeError, ValueError):
+                labels = []
+            out.append({
+                "id": p.id,
+                "name": p.name,
+                "attributes": len(spec_profile_service.profile_fields(db, p.id)),  # type: ignore[arg-type]
+                "categories": [str(x) for x in labels][:4] if isinstance(labels, list) else [],
+            })
+        return {
+            "count": len(out),
+            "profiles": out,
+            "note": "Show the profile NAMES in one short line (not ids). The user picks one in the review card's 'Specification profile' dropdown or tells you the name; if they name one, call fill_product_from_source with overrides.profile. If the list is empty, say there is no profile yet and a new one can be created from the source.",
         }
 
     return [
@@ -962,6 +1159,10 @@ def build_catalog_import_tools(*, db: Session | None, company_id: str | None, us
                     "type": "object",
                     "properties": {
                         "url": {"type": "string", "description": "Full product page URL"},
+                        "profile": {
+                            "type": "string",
+                            "description": "The ATTRIBUTE / SPECIFICATION PROFILE the user wants for this product, by the name they said ('Laptop' ...). Use it when they say e.g. 'laptop attribute profile use koro' after a preview (call again with the same url + profile, still without confirm). 'new' = create a new profile from the page, 'none' = no profile.",
+                        },
                         "confirm": {
                             "type": "boolean",
                             "description": "false/omitted = preview only (nothing written). true = create — ONLY after the user has explicitly confirmed the preview in this conversation.",
@@ -1100,8 +1301,13 @@ def build_catalog_import_tools(*, db: Session | None, company_id: str | None, us
                                 "warranty": {"type": "string"},
                                 "origin": {"type": "string"},
                                 "stock_status": {"type": "string", "enum": ["in_stock", "out_of_stock", "pre_order", "coming_soon"]},
+                                "profile": {
+                                    "type": "string",
+                                    "description": "The ATTRIBUTE / SPECIFICATION PROFILE the user wants for this product, by the name they said ('Laptop', 'Monitor' ...). Use it when they say e.g. 'laptop attribute profile use koro'. 'new' = create a new profile from the source page, 'none' = no profile (specs stay on the product only).",
+                                },
                             },
                         },
+                        "reshow": {"type": "boolean", "description": "true = show the open review card again without changing anything (e.g. the user asked for the profile list / dropdown)"},
                         "confirm": {"type": "boolean", "description": "true only after the user approved the preview"},
                     },
                     "required": ["product"],
@@ -1109,6 +1315,23 @@ def build_catalog_import_tools(*, db: Session | None, company_id: str | None, us
             ),
             handler=fill_product_from_source,
             risk_tier=RiskTier.WRITE,
+            module="catalog",
+        ),
+        OrchestratorTool(
+            definition=AIToolDefinition(
+                name="list_spec_profiles",
+                description=(
+                    "List the existing attribute / specification profiles (name, how many attributes, its categories). Use when the user asks "
+                    "'attribute profile list dao', which profiles exist, or wants to choose one: show the names in one short line and tell them "
+                    "they can pick it in the review card's 'Specification profile' dropdown or say the name. Read-only."
+                ),
+                input_schema={
+                    "type": "object",
+                    "properties": {"query": {"type": "string", "description": "Optional: only profiles whose name contains these words"}},
+                },
+            ),
+            handler=list_spec_profiles,
+            risk_tier=RiskTier.READ,
             module="catalog",
         ),
     ]
