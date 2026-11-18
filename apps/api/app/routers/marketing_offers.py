@@ -446,7 +446,7 @@ def delete_offer(
         raise HTTPException(status_code=404, detail="Offer not found")
 
     from app.models.catalog_product import CatalogProduct
-    from app.models.catalog_product_special import CatalogProductSpecial
+    from app.models.catalog_product_special import CatalogProductSpecial, resolve_active_special
     from app.services.ecommerce.ecommerce_item_service import EcommerceItemService
 
     linked_product_ids = [
@@ -460,5 +460,14 @@ def delete_offer(
     if linked_product_ids:
         products = db.query(CatalogProduct).filter(CatalogProduct.id.in_(linked_product_ids)).all()
         for product in products:
+            # The offer's mirrors are gone: what special is still running (e.g. a manual one) sets the countdown, else none.
+            # Without this the product page kept counting down to the deleted offer's end date.
+            remaining = (
+                db.query(CatalogProductSpecial)
+                .filter(CatalogProductSpecial.product_id == product.id)
+                .all()
+            )
+            active = resolve_active_special(remaining)
+            product.sale_ends_at = active.date_end if active else None
             EcommerceItemService(db).sync_content_from_catalog(product, mirror_publish=False)
         db.commit()

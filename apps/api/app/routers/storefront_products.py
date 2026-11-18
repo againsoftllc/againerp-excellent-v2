@@ -913,13 +913,12 @@ def _load_sale_ends_at(db: Session, catalog_product_id: Optional[str]) -> Option
             return _as_utc(window_close_utc)
         return _as_utc(active.date_end)
 
-    # Legacy fallback for products with no catalog_product_specials rows at all.
+    # Legacy fallback for products with no catalog_product_specials rows at all: only an explicit date in the product's own
+    # custom specs. The `sale_ends_at` column is NOT a fallback any more - without a special price row it is a leftover of a
+    # deleted offer, and the page showed "Ends in 74 days" for a product that was on no offer.
     product = db.get(CatalogProduct, catalog_product_id)
     if not product:
         return None
-    ends = getattr(product, "sale_ends_at", None)
-    if isinstance(ends, datetime):
-        return _as_utc(ends)
     if product.custom_specs_json:
         try:
             specs = json.loads(product.custom_specs_json)
