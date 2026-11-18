@@ -15,6 +15,8 @@ export type Product = {
   name: string;
   slug: string;
   sku: string;
+  /** EX000001 - the number the product was given when it was saved; shown as the Product ID (the SKU is the same) */
+  serialCode?: string | null;
   /** where the product was copied from (a competitor page); Product Draft's AI column reads it */
   sourceUrl?: string | null;
   /** The product's specification profile (the list shows its name) */

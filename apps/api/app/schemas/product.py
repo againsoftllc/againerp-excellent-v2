@@ -152,6 +152,9 @@ class ProductUpdate(BaseModel):
 
 
 class ProductRead(ProductBase):
+    # the product's number (1, 2, 3 ...) and its code (EX000001): the Product ID shown instead of the UUID, and the SKU
+    serial_no: Optional[int] = None
+    serial_code: Optional[str] = None
     model_config = ConfigDict(from_attributes=True)
 
     # Reads must accept negative stock — "Allow negative stock" lets sales

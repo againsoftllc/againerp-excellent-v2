@@ -5,10 +5,20 @@ from datetime import datetime
 from decimal import Decimal
 from typing import Optional
 
-from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, Numeric, String, Text, func
+from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, Numeric, Sequence, String, Text, event, func, inspect, text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.database import Base
+
+# A product's serial number (1, 2, 3 ...) and its code (EX000001, EX000002 ...). The code IS the product's SKU and is the same in the
+# Product ID column; the UUID stays inside as the key the other tables point at. Numbers are never given out twice (a database sequence).
+PRODUCT_CODE_PREFIX = "EX"
+PRODUCT_CODE_WIDTH = 6
+catalog_product_serial_seq = Sequence("catalog_product_serial_seq", metadata=Base.metadata)
+
+
+def product_code(serial: int) -> str:
+    return f"{PRODUCT_CODE_PREFIX}{int(serial):0{PRODUCT_CODE_WIDTH}d}"
 
 
 class CatalogProduct(Base):
@@ -41,6 +51,8 @@ class CatalogProduct(Base):
     name: Mapped[str] = mapped_column(String(255), nullable=False)  # P7 mirror — SSOT: items.name
     slug: Mapped[str] = mapped_column(String(255), nullable=False, unique=True, index=True)
     sku: Mapped[str] = mapped_column(String(100), nullable=False, unique=True, index=True)  # P7 mirror
+    # 1, 2, 3 ... given when the product is saved (never changes); the SKU is product_code(serial_no)
+    serial_no: Mapped[Optional[int]] = mapped_column(Integer, nullable=True, index=True)
     model: Mapped[Optional[str]] = mapped_column(String(200), nullable=True)
     # Internal note / remarks about the product — staff-only, never shown on the storefront.
     remarks: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
@@ -121,3 +133,19 @@ class CatalogProduct(Base):
     # who made the last change: filled for every save from the signed-in user (app/services/audit_actor.py), the AI chat included
     updated_by_id: Mapped[Optional[str]] = mapped_column(String(36), nullable=True)
     updated_by_name: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+
+
+@event.listens_for(CatalogProduct, "before_insert")
+def _give_new_product_its_code(mapper, connection, target) -> None:
+    """Every new product gets the next serial number and its code as the SKU - whatever SKU the caller (form, import, clone) brought."""
+    if target.serial_no is None:
+        target.serial_no = int(connection.execute(text("select nextval('catalog_product_serial_seq')")).scalar_one())
+    target.sku = product_code(target.serial_no)
+
+
+@event.listens_for(CatalogProduct, "before_update")
+def _product_sku_never_changes(mapper, connection, target) -> None:
+    """The SKU is fixed once the product exists: any change made in a flush (an edit, an import, a mirror from items) is put back."""
+    history = inspect(target).attrs.sku.history
+    if history.has_changes() and history.deleted:
+        target.sku = history.deleted[0]

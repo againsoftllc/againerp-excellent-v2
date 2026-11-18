@@ -1191,8 +1191,10 @@ export function InventoryProductQuickAdd({
                       <Input
                         id="qa-sku"
                         value={sku}
-                        onChange={(e) => setSku(e.target.value)}
-                        placeholder="Auto-generated if blank"
+                        readOnly
+                        disabled
+                        placeholder="Auto (EX000001)"
+                        title="The SKU is the product's code, given when it is saved. It never changes."
                       />
                     </AgainFormField>
                     <AgainFormField label="Model">

@@ -281,6 +281,7 @@ def _bootstrap() -> None:
             ensure_catalog_brand_columns,
             ensure_catalog_category_columns,
             ensure_catalog_mpn_columns,
+            ensure_catalog_product_serial,
             ensure_catalog_product_pos_fields_columns,
             ensure_catalog_product_updated_by_columns,
             ensure_approval_request_target_columns,
@@ -416,6 +417,7 @@ def _bootstrap() -> None:
         ensure_catalog_review_columns()
         ensure_catalog_category_columns()
         ensure_catalog_mpn_columns()
+        ensure_catalog_product_serial()
         ensure_catalog_brand_columns()
         ensure_product_columns()
         # additive columns added with the AI / catalog work (2026-10-18); every one is IF NOT EXISTS, safe on each start

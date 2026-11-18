@@ -258,13 +258,12 @@ export function mergeGeneratedRows(
     }
 
     added += 1;
-    const parts = Object.values(combo).map(slugifySkuPart).filter(Boolean);
     const inherited = inheritedRowImage(dimensions, combo);
     return {
       id: `new_${Date.now()}_${index}`,
       label: buildVariantLabel(combo),
       dimensions: combo,
-      sku: parts.length ? `${prefix}-${parts.join("-")}` : `${prefix}-${index + 1}`,
+      sku: "", // EX000001-1, -2 ... are given when the product is saved; the name of the variant is never part of it
       price: basePrice,
       purchasePrice: basePurchasePrice,
       stock: 0,

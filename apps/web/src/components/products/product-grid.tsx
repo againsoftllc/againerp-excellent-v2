@@ -1965,7 +1965,8 @@ export const ProductGrid = forwardRef<ProductGridHandle, Props>(function Product
       },
       {
         colId: "productId",
-        field: "id",
+        // the product's code (EX000001), the same as its SKU; the UUID stays inside
+        valueGetter: (p) => p.data?.serialCode ?? p.data?.id,
         headerName: "Product ID",
         hide: !visibleCols.productId,
         pinned: "left",

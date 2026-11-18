@@ -4,7 +4,7 @@ import uuid
 from datetime import datetime
 from typing import Optional
 
-from sqlalchemy import DateTime, String, UniqueConstraint, func
+from sqlalchemy import DateTime, String, UniqueConstraint, event, func, inspect, text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.database import Base
@@ -41,3 +41,15 @@ class Item(Base):
         server_default=func.now(),
         onupdate=func.now(),
     )
+
+
+@event.listens_for(Item, "before_update")
+def _catalog_item_sku_never_changes(mapper, connection, target) -> None:
+    """An item behind a catalog product carries the product's code as its SKU: the Items screen can not change it either."""
+    history = inspect(target).attrs.sku.history
+    if history.has_changes() and history.deleted:
+        linked = connection.execute(
+            text("select 1 from catalog_products where item_id = :i or id = :i limit 1"), {"i": target.id}
+        ).first()
+        if linked:
+            target.sku = history.deleted[0]

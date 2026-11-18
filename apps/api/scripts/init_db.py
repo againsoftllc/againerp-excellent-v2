@@ -4900,6 +4900,28 @@ def ensure_catalog_mpn_columns() -> None:
         conn.execute(text("ALTER TABLE catalog_product_variants ADD COLUMN IF NOT EXISTS mpn VARCHAR(200)"))
 
 
+def ensure_catalog_product_serial() -> None:
+    """Serial number (1, 2, 3 ...) of every catalog product: the sequence, the column, and numbers for the products that have none yet
+    (oldest first). The SKUs of existing products are NOT touched here (scripts/assign_product_codes.py does that on purpose)."""
+    with engine.begin() as conn:
+        conn.execute(text("CREATE SEQUENCE IF NOT EXISTS catalog_product_serial_seq"))
+        conn.execute(text("ALTER TABLE catalog_products ADD COLUMN IF NOT EXISTS serial_no INTEGER"))
+        conn.execute(
+            text(
+                """WITH base AS (SELECT COALESCE(MAX(serial_no), 0) AS m FROM catalog_products),
+                        ordered AS (SELECT id, ROW_NUMBER() OVER (ORDER BY created_at, id) AS rn FROM catalog_products WHERE serial_no IS NULL)
+                   UPDATE catalog_products p SET serial_no = base.m + ordered.rn FROM ordered, base WHERE p.id = ordered.id"""
+            )
+        )
+        conn.execute(text("CREATE UNIQUE INDEX IF NOT EXISTS ux_catalog_products_serial_no ON catalog_products (serial_no)"))
+        # the next number is the highest one given + 1, and never goes back to a number already given out
+        last, called = conn.execute(text("SELECT last_value, is_called FROM catalog_product_serial_seq")).one()
+        nxt = int(last) + 1 if called else int(last)
+        top = int(conn.execute(text("SELECT COALESCE(MAX(serial_no), 0) FROM catalog_products")).scalar_one())
+        if top + 1 > nxt:
+            conn.execute(text("SELECT setval('catalog_product_serial_seq', :v, false)"), {"v": top + 1})
+
+
 def ensure_catalog_category_columns() -> None:
     """SkyBuy-style China keyword browse + Catalog vs Dropshipping channel split."""
     with engine.begin() as conn:
@@ -6508,6 +6530,7 @@ def main() -> None:
     ensure_catalog_review_columns()
     ensure_catalog_category_columns()
     ensure_catalog_mpn_columns()
+    ensure_catalog_product_serial()
     ensure_catalog_brand_columns()
     ensure_product_columns()
     ensure_product_attribute_value_columns()

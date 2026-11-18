@@ -1205,11 +1205,7 @@ export function ProductVariantEditor({
                             </div>
                             <div className="grid gap-2">
                               <Field label="SKU">
-                                <Input
-                                  className="h-8 font-mono text-xs"
-                                  value={row.sku}
-                                  onChange={(e) => updateRow(row.id, { sku: e.target.value })}
-                                />
+                                <Input className="h-8 font-mono text-xs" value={row.sku} readOnly disabled placeholder="Auto" title="Given when the product is saved; never changes" />
                               </Field>
                               {mpnOptions.length > 0 && (
                                 <Field label="MPN">
@@ -1345,11 +1341,7 @@ export function ProductVariantEditor({
                                   </div>
                                 </td>
                                 <td className="px-3 py-2">
-                                  <Input
-                                    className="h-7 rounded-none font-mono text-xs"
-                                    value={row.sku}
-                                    onChange={(e) => updateRow(row.id, { sku: e.target.value })}
-                                  />
+                                  <Input className="h-7 rounded-none font-mono text-xs" value={row.sku} readOnly disabled placeholder="Auto" title="Given when the product is saved; never changes" />
                                 </td>
                                 {mpnOptions.length > 0 && (
                                   <td className="px-3 py-2">

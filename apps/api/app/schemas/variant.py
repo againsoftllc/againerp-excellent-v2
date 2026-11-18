@@ -43,7 +43,8 @@ class VariantResponse(BaseModel):
 
 class VariantUpsert(BaseModel):
     id: Optional[str] = None
-    sku: str = Field(min_length=1, max_length=100)
+    # ignored: a variant's SKU is given by the server (EX000123-1 ...) and never changes
+    sku: str = Field(default="", max_length=100)
     name: str = Field(min_length=1, max_length=255)
     price: Decimal = Field(ge=0)
     purchase_price: Optional[Decimal] = Field(default=None, ge=0)

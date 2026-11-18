@@ -16,7 +16,7 @@ from app.models.auth_user import AuthUser
 from app.database import get_db
 from app.models.catalog_brand import CatalogBrand
 from app.models.catalog_category import CatalogCategory
-from app.models.catalog_product import CatalogProduct
+from app.models.catalog_product import CatalogProduct, product_code
 from app.models.catalog_product_attribute_value import CatalogProductAttributeValue
 from app.models.catalog_product_media import CatalogProductMedia
 from app.models.catalog_product_variant import CatalogProductVariant
@@ -375,6 +375,8 @@ def _product_read(
         name=identity["name"],
         slug=row.slug,
         sku=identity["sku"],
+        serial_no=getattr(row, "serial_no", None),
+        serial_code=product_code(row.serial_no) if getattr(row, "serial_no", None) else None,
         model=row.model,
         remarks=row.remarks,
         description=None if lean else row.description,
@@ -680,7 +682,6 @@ def _replace_variants(
             keep_ids.add(row.id)
             continue
 
-        row.sku = item.sku
         row.name = item.name
         row.price = item.price
         row.purchase_price = item.purchase_price
@@ -1131,12 +1132,8 @@ def create_product(
     # Inventory products are keyed by id: a blank SKU gets a generated one, and the
     # slug (only the storefront cares) is derived from the name and de-duplicated.
     # Only a SKU that someone else already uses is a real conflict.
-    sku = (payload.sku or "").strip()
-    if not sku:
-        sku = _generate_sku(db, identity_svc, company_id)
-        payload = payload.model_copy(update={"sku": sku})
-    elif identity_svc.sku_taken(sku, company_id=company_id):
-        raise HTTPException(status_code=409, detail=_sku_conflict_detail(db, sku, company_id))
+    # No custom SKU: a product's SKU is its own code (EX000123), given the moment it is saved (see CatalogProduct).
+    payload = payload.model_copy(update={"sku": ""})
 
     payload = payload.model_copy(
         update={"slug": _free_slug(db, payload.slug or payload.name, company_id)}
@@ -1276,7 +1273,7 @@ def duplicate_product(
         company_id=source.company_id,
         name=f"{source.name} (Copy)",
         slug=_unique_slug(db, source.slug, company_id),
-        sku=_unique_sku(db, source.sku, company_id),
+        sku="",  # the copy gets its own code when it is saved
         model=source.model,
         remarks=source.remarks,
         description=source.description,
@@ -1423,19 +1420,11 @@ def update_product(
         return ProductDetailResponse(data=_product_detail(db, row))
 
     slug = changes.get("slug", row.slug)
-    sku = changes.get("sku", row.sku)
     identity_svc = ItemIdentityService(db)
-    if "sku" in changes and not (sku or "").strip():
-        # Clearing the SKU is not allowed (it's the barcode/lookup key) — keep the old one.
-        changes["sku"] = row.sku
-        sku = row.sku
-    if identity_svc.sku_taken(
-        sku,
-        company_id=row.company_id,
-        exclude_item_id=row.item_id,
-        exclude_product_id=product_id,
-    ):
-        raise HTTPException(status_code=409, detail=_sku_conflict_detail(db, sku, company_id))
+    if "sku" in changes:
+        # The SKU is the product's code and never changes. The same value coming back (the form sends it) is fine.
+        if (changes.pop("sku") or "").strip() != (row.sku or ""):
+            raise HTTPException(status_code=422, detail=f"The SKU can't be changed - it is this product's code ({row.sku}).")
 
     # A slug clash is never a reason to refuse an inventory edit: pick the next free one.
     free = _free_slug(db, slug, company_id, exclude_product_id=product_id)
@@ -1547,24 +1536,7 @@ def replace_product_variants(
     if not row or (row.company_id or "default") != company_id:
         raise HTTPException(status_code=404, detail="Product not found")
 
-    skus = [v.sku for v in payload.variants]
-    print(f"[variants] PUT product={product_id} sent={skus}", flush=True)
-    if len(skus) != len(set(skus)):
-        raise HTTPException(status_code=400, detail="Duplicate variant SKUs in payload")
-
-    for item in payload.variants:
-        taken = (
-            db.query(CatalogProductVariant)
-            .filter(
-                CatalogProductVariant.sku == item.sku,
-                CatalogProductVariant.product_id != product_id,
-                CatalogProductVariant.id != (item.id or ""),
-            )
-            .first()
-        )
-        if taken:
-            raise HTTPException(status_code=409, detail=f"Variant SKU already in use: {item.sku}")
-
+    # The SKUs in the payload are not used: a new variant gets EX000123-n from the server, an existing one keeps its own.
     _replace_variants(db, row, payload.variants)
     db.flush()
     if _follow_default_variant_price(db, row):

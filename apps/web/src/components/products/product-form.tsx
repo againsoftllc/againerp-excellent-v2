@@ -1287,8 +1287,10 @@ export function ProductForm({
                 <Field label="SKU">
                   <Input
                     value={values.sku}
-                    onChange={(e) => set("sku", e.target.value)}
-                    placeholder="Auto"
+                    readOnly
+                    disabled
+                    placeholder="Auto (EX000001)"
+                    title="The SKU is the product's code, given when it is saved. It never changes."
                     maxLength={PRODUCT_FIELD_LIMITS.sku}
                   />
                 </Field>

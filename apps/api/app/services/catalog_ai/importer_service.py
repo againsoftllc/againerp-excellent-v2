@@ -948,13 +948,8 @@ def create_product_from_draft(
     identity_svc = ItemIdentityService(db)
     base_slug = slugify(draft.name) or "product"
     slug = existing.slug if existing is not None else _unique_slug(db, base_slug, getattr(user, "company_id", None) or "default")
-    # the page's own SKU / MPN when it has one; otherwise the next number of the company's serial (SKU-000001 ...)
-    if existing is not None:
-        sku = existing.sku
-    elif draft.sku:
-        sku = _unique_sku(db, re.sub(r"\s+", "-", draft.sku.strip()).upper()[:40], identity_svc)
-    else:
-        sku = identity_svc.next_serial_sku(getattr(user, "company_id", None) or "default")
+    # A product's SKU is its own code (EX000123), given when it is saved; the code on the source page is not used.
+    sku = existing.sku if existing is not None else ""
 
     company_id = getattr(user, "company_id", None) or "default"
 
@@ -1013,8 +1008,6 @@ def create_product_from_draft(
         thumbnail=draft.images[0] if draft.images else None,
     )
 
-    if existing is None and identity_svc.sku_taken(create_payload.sku):
-        raise HTTPException(status_code=409, detail="Generated SKU already exists — retry")
     if existing is None and _slug_taken(db, create_payload.slug, company_id):
         raise HTTPException(status_code=409, detail="Generated slug already exists — retry")
 
@@ -1120,7 +1113,7 @@ def create_product_from_draft(
     if is_variable:
         variants = [
             VariantUpsert(
-                sku=_unique_sku(db, f"{row.sku}-{re.sub(r'[^A-Za-z0-9]+', '', v.name)[:12] or i + 1}", identity_svc),
+                sku="",  # EX000123-1, -2 ... are given when the variants are saved
                 name=v.name[:255],
                 price=v.price if v.price is not None else (row.price or Decimal("0")),
                 stock=0,

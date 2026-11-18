@@ -87,7 +87,7 @@ export function AddProductDialog({ open, onOpenChange, onCreated, initialValues 
               </Field>
               <div className="grid gap-3 sm:grid-cols-2">
                 <Field label="SKU">
-                  <Input value={sku} onChange={(e) => setSku(e.target.value)} placeholder="Auto-generated if empty" />
+                  <Input value={sku} readOnly disabled placeholder="Auto (EX000001)" title="The SKU is the product's code, given when it is saved." />
                 </Field>
                 <Field label="Price (BDT) *">
                   <Input type="number" min={0} step="0.01" value={price} onChange={(e) => setPrice(e.target.value)} placeholder="899" />

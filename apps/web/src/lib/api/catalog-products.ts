@@ -14,6 +14,9 @@ export type DigitalFile = {
 };
 
 export type ApiCatalogProduct = {
+  /** the product's number (1, 2, 3 ...) and its code (EX000001): the Product ID shown instead of the UUID, and the SKU */
+  serial_no?: number | null;
+  serial_code?: string | null;
   id: string;
   /** Universal Item SSOT key (ADR-014 P7) — authoritative identity across modules. */
   item_id?: string | null;
@@ -259,6 +262,7 @@ export function apiProductToProduct(row: ApiCatalogProduct): Product {
     name: row.name,
     slug: row.slug,
     sku: row.sku,
+    serialCode: row.serial_code ?? null,
     sourceUrl: row.source_url ?? null,
     attributeProfileId: row.attribute_profile_id ?? null,
     model: row.model ?? null,
