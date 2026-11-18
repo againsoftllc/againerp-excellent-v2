@@ -43,7 +43,8 @@ const DEFAULTS: Record<string, { label: string; sublabel: string; href: string }
   track_order: { label: "Track Order", sublabel: "", href: "/track-order" },
   our_branches: { label: "Our Branches", sublabel: "", href: "/branches" },
   pc_builder: { label: "PC Builder", sublabel: "", href: "/pc-builder" },
-  wishlist: { label: "Offers", sublabel: "Hot Deals", href: "/offers" },
+  hot_deals: { label: "Offers", sublabel: "Hot Deals", href: "/offers" },
+  wishlist: { label: "11.11", sublabel: "Campaign", href: "/search?q=11.11" },
   account: { label: "Account", sublabel: "", href: "/account" },
   cart: { label: "My Cart", sublabel: "", href: "/cart" },
 };
@@ -95,7 +96,7 @@ export function LiveEditExcellentHeaderDrawer({ onBack, open, onOpenChange, mode
     const d = DEFAULTS[key];
     return (
       <Card key={`${where}-${key}`} title={title}>
-        <Toggle label={`Show ${title}`} checked={!row.hidden} onChange={(v) => setItem(where, key, { hidden: !v })} />
+        <Toggle label={`Show ${title}`} checked={!row.hidden && (key !== "wishlist" || Object.keys(row).length > 0)} onChange={(v) => setItem(where, key, { hidden: !v })} />
         <AgainFormRow label="Label">
           <Input value={text(row.label) || d.label} onChange={(e) => setItem(where, key, { label: e.target.value })} className="h-8 text-[13px]" placeholder={d.label} />
         </AgainFormRow>
@@ -161,7 +162,8 @@ export function LiveEditExcellentHeaderDrawer({ onBack, open, onOpenChange, mode
                     </AgainFormRow>
                   </Card>
                   {item("root", "pc_builder", "PC Builder")}
-                  {item("root", "wishlist", "Offers")}
+                  {item("root", "hot_deals", "Offers page button")}
+                  {item("root", "wishlist", "Campaign button (11.11)")}
                   {item("root", "account", "Account")}
                   {item("root", "cart", "Cart")}
                   <p className="text-[11px] text-muted-foreground">Turning off PC Builder, Account or Cart also hides it in the mobile menu and bottom bar.</p>
