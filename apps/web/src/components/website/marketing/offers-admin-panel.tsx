@@ -2,6 +2,7 @@
 
 import "@/components/providers/ag-grid-provider";
 import { useEffect, useMemo, useRef, useState, useCallback } from "react";
+import { useDealTableColumns } from "@/components/website/marketing/deal-table-columns";
 import { useRouter, useSearchParams } from "next/navigation";
 import type { ColDef, ICellRendererParams } from "ag-grid-community";
 import {
@@ -1155,6 +1156,7 @@ function DealsTable({
   showSection?: boolean;
 }) {
   const scrollRef = useRef<HTMLDivElement>(null);
+  const dealCols = useDealTableColumns(showSection);
   const [canScrollLeft, setCanScrollLeft] = useState(false);
   const [canScrollRight, setCanScrollRight] = useState(false);
 
@@ -1185,24 +1187,11 @@ function DealsTable({
     <div className="relative">
       <div
         ref={scrollRef}
-        className="overflow-x-auto border border-border/60 [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
+        className="overflow-x-auto border border-border/60"
       >
-      <table className="w-full min-w-[560px] table-fixed border-collapse text-[11px]">
-        <thead>
-          <tr className="bg-muted/40 text-left">
-            <th className="w-9 px-1.5 py-1 font-medium" />
-            <th className="px-1.5 py-1 font-medium">Product</th>
-            {showSection ? <th className="w-24 px-1.5 py-1 font-medium">Section</th> : null}
-            <th className="w-16 px-1.5 py-1 font-medium">Regular</th>
-            <th className="w-10 px-1.5 py-1 font-medium">Qty</th>
-            <th className="w-24 px-1.5 py-1 font-medium">Stock</th>
-            <th className="w-28 px-1.5 py-1 font-medium">Offer ৳</th>
-            <th className="w-14 px-1.5 py-1 font-medium">Priority</th>
-            <th className="w-28 px-1.5 py-1 font-medium">Quantity</th>
-            <th className="w-14 px-1.5 py-1 font-medium">Enabled</th>
-            <th className="w-8 px-1.5 py-1" />
-          </tr>
-        </thead>
+      <table className="table-fixed border-collapse text-[11px]" style={dealCols.tableStyle}>
+        {dealCols.colgroup}
+        <thead>{dealCols.header}</thead>
         <tbody>
           {rows.map((row) => {
             const { deal } = row;
@@ -1242,6 +1231,9 @@ function DealsTable({
                     value={deal.note}
                     onChange={(e) => row.onUpdate({ note: e.target.value })}
                   />
+                </td>
+                <td className="px-1.5 py-1.5 text-muted-foreground">
+                  <span className="block break-words font-mono text-[10px] leading-4">{product?.model || "—"}</span>
                 </td>
                 {showSection ? (
                   <td className="truncate px-1.5 py-1.5 text-muted-foreground">{row.sectionLabel}</td>

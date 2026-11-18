@@ -195,6 +195,7 @@ from app.routers import (
     website_branches,
     website_contact_messages,
     marketing_offers,
+    marketing_offer_deals,
     storefront_account,
     storefront_auth,
     storefront_cart,
@@ -1056,6 +1057,7 @@ app.include_router(pos.router, prefix="/api/v1", dependencies=require_admin)
 app.include_router(platform_settings.router, prefix="/api/v1", dependencies=require_admin)
 app.include_router(marketing_coupons.router, prefix="/api/v1", dependencies=require_admin)
 app.include_router(marketing_offers.router, prefix="/api/v1", dependencies=require_admin)
+app.include_router(marketing_offer_deals.router, prefix="/api/v1", dependencies=require_admin)
 app.include_router(marketing_happy_hours.router, prefix="/api/v1", dependencies=require_admin)
 app.include_router(marketing_popups.router, prefix="/api/v1", dependencies=require_admin)
 app.include_router(seo_schema_config.router, prefix="/api/v1", dependencies=require_admin)

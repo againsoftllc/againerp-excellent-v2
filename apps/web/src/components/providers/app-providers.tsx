@@ -3,6 +3,7 @@
 import dynamic from "next/dynamic";
 import { useEffect, useRef, useState } from "react";
 import { Toaster } from "sonner";
+import { ConfirmHost } from "@/components/shared/confirm-dialog";
 import { COMMAND_PALETTE_OPEN_EVENT } from "@/lib/navigation/command-palette";
 import { useActivityStore } from "@/lib/store/activity-store";
 
@@ -82,6 +83,7 @@ export function AppProviders({ children }: { children: React.ReactNode }) {
           },
         }}
       />
+      <ConfirmHost />
       <OnDemandGlobalFeatures />
     </>
   );

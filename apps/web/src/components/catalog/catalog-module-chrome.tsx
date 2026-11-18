@@ -96,6 +96,7 @@ const NAV_GROUPS_BASE: NavGroup[] = [
     children: [
       { id: "offers", label: "Offers", href: "/website/marketing/offers" },
       { id: "happy-hour", label: "Happy Hour", href: "/website/marketing/happy-hour" },
+      { id: "offer-products", label: "Offer Products", href: "/website/marketing/offer-products" },
       { id: "popups", label: "Popups", href: "/website/marketing/popups" },
       { id: "subscribers", label: "Subscribers", href: "/website/marketing/subscribers" },
       { id: "coupons", label: "Coupons", href: "/website/marketing/coupons" },

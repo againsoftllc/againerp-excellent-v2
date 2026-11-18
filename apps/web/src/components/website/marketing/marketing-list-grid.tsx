@@ -65,6 +65,8 @@ type Props<T extends { id: string }> = {
   /** A one-line explanation under the toolbar. */
   note?: ReactNode;
   error?: string | null;
+  /** Shows the Columns button at the right end of the header (the same picker as Products). */
+  onOpenColumns?: () => void;
 };
 
 /**
@@ -94,6 +96,7 @@ export function MarketingListGrid<T extends { id: string }>({
   settingsMenu,
   note,
   error,
+  onOpenColumns,
 }: Props<T>) {
   const apiHealth = useApiHealth();
   const healthTitle =
@@ -221,6 +224,7 @@ export function MarketingListGrid<T extends { id: string }>({
         emptyHint={filtersActive ? undefined : emptyHint}
         onResetFilters={filtersActive ? onResetFilters : undefined}
         onRowClicked={onOpen}
+        onOpenColumns={onOpenColumns}
         layoutKey={layoutKey}
         mobile={mobile}
       />
