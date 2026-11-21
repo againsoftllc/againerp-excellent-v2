@@ -1303,7 +1303,7 @@ function CompactValueInput({ attr, value, onChange, predefinedValues, displayVal
     </button>
   ) : null;
   const overrideBox = overrideShown ? (
-    <ExpandableTextInput
+    <InlineMultilineInput
       value={displayValue}
       onChange={(v) => onDisplayChange?.(v)}
       placeholder={`Shown on the product page instead of "${value}" (the filter keeps "${value}")`}
@@ -1332,7 +1332,7 @@ function CompactValueInput({ attr, value, onChange, predefinedValues, displayVal
           ))}
         </div>
         {value ? (
-          <ExpandableTextInput
+          <InlineMultilineInput
             value={displayValue}
             onChange={(v) => onDisplayChange?.(v)}
             placeholder={attr.unit ? `Exact value (${attr.unit}) — shown on the product page` : "Exact value — shown on the product page"}
@@ -1512,5 +1512,24 @@ function ExpandableTextInput({
         />
       )}
     </div>
+  );
+}
+
+/* Multi-line box that grows in place (no floating layer, so nothing can clip it): Enter = new line. */
+function InlineMultilineInput({ value, onChange, placeholder }: { value: string; onChange: (v: string) => void; placeholder?: string }) {
+  const ref = useRef<HTMLTextAreaElement>(null);
+  useEffect(() => {
+    const ta = ref.current;
+    if (ta) { ta.style.height = "auto"; ta.style.height = `${ta.scrollHeight}px`; }
+  }, [value]);
+  return (
+    <textarea
+      ref={ref}
+      rows={1}
+      value={value}
+      onChange={(e) => onChange(e.target.value)}
+      placeholder={placeholder}
+      className="block min-h-6 w-full resize-none overflow-hidden whitespace-pre-wrap rounded-none border border-input bg-background px-1.5 py-1 text-[11px] leading-snug outline-none focus:border-primary"
+    />
   );
 }
