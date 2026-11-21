@@ -62,3 +62,40 @@ export async function startProductAiFill(product: Product, onDone: () => void): 
   }
   useAiChatStore.getState().startProductTask({ id: product.id, name: product.name }, onDone);
 }
+
+/**
+ * Aladin chat: a product link typed in the message may be on a shop that blocks the server (Cloudflare). When the Send to
+ * AgainERP extension is installed, this browser reads each link first and hands the HTML (and photos) to the server, so
+ * the chat's import reads that copy instead of fetching the shop. Never throws - on any failure the server tries itself.
+ */
+export async function shareSourceLinksWithServer(text: string, onStatus?: (msg: string) => void): Promise<void> {
+  if (!isPriceExtensionAvailable()) return;
+  const urls = Array.from(new Set((text.match(/https?:\/\/[^\s<>"')]+/gi) ?? []).map((u) => u.replace(/[.,;]+$/, "")))).slice(0, 3);
+  for (const url of urls) {
+    try {
+      onStatus?.("Reading the source page through your browser…");
+      const read = await readPageHtmlViaExtension(url);
+      if (!read.ok) {
+        if (/needs your OK/i.test(read.error)) toast.warning(read.error, { duration: 20000 });
+        continue;
+      }
+      const page = await apiFetch<{ data: { image_urls?: string[] } }>("/api/v1/catalog/ai/source-page", {
+        method: "POST",
+        body: JSON.stringify({ url, html: read.html }),
+      });
+      const imageUrls = page.data.image_urls ?? [];
+      if (imageUrls.length) {
+        onStatus?.("Reading the product photos through your browser…");
+        const photos = await readImagesViaExtension(imageUrls, read.pageUrl || url);
+        for (let i = 0; i < photos.images.length; i += 4) {
+          await apiFetch("/api/v1/catalog/ai/source-images", {
+            method: "POST",
+            body: JSON.stringify({ images: photos.images.slice(i, i + 4) }),
+          }).catch(() => undefined);
+        }
+      }
+    } catch {
+      /* the server will try the link itself */
+    }
+  }
+}

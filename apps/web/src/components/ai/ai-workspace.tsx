@@ -54,6 +54,7 @@ import {
 } from "@/lib/api/ai-chat";
 import { useAdminAuth } from "@/lib/store/admin-auth-store";
 import { useAiChatStore } from "@/lib/store/ai-chat-store";
+import { shareSourceLinksWithServer } from "@/lib/start-product-ai";
 import { cn, formatDate } from "@/lib/utils";
 
 /**
@@ -697,6 +698,9 @@ export function AiWorkspace({
         const attachments = files.length
           ? await Promise.all(files.map(async (f) => ({ name: f.name, mime: f.mime, size: f.size, data: await readAsBase64(f.file) })))
           : undefined;
+        // a product link on a shop that blocks the server: this browser reads it first (extension), the server uses that copy
+        await shareSourceLinksWithServer(text, (m) => setStatus(m));
+        setStatus("Thinking…");
         await streamAiChat(
           {
             message: text,

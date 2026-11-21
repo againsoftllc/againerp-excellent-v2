@@ -10,6 +10,7 @@ import { Button } from "@/components/ui/button";
 import { getStoredAuthToken } from "@/lib/store/admin-auth-store";
 import { useAppStore } from "@/lib/store/app-store";
 import { useModuleSettingsStore } from "@/lib/store/module-settings-store";
+import { shareSourceLinksWithServer } from "@/lib/start-product-ai";
 import { cn } from "@/lib/utils";
 
 type ChatMsg = {
@@ -500,6 +501,7 @@ export function AiFloatingChat() {
               files.map(async (f) => ({ name: f.name, mime: f.mime, size: f.size, data: await readAsBase64(f.file) })),
             )
           : undefined;
+        await shareSourceLinksWithServer(text, (m) => setStatusHint(m));
         result = await streamChat(token, text, assistantMsgId, attachments);
       } catch (err) {
         if ((err as { status?: number }).status === 404) {
