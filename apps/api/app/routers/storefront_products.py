@@ -662,7 +662,9 @@ def _load_specifications(db: Session, catalog_product_id: Optional[str]) -> list
     )
     groups: dict[str, StorefrontSpecGroupRead] = {}
     order: list[str] = []
+    gid_to_name: dict[str, str] = {}
     for val, attr, group in rows:
+        gid_to_name[group.id] = group.name
         if not val.value or not val.value.strip():
             continue
         if group.name not in groups:
@@ -670,39 +672,75 @@ def _load_specifications(db: Session, catalog_product_id: Optional[str]) -> list
             order.append(group.name)
         shown = (val.display_value or "").strip() or val.value
         groups[group.name].specs.append(StorefrontSpecItemRead(label=attr.name, value=shown))
-    profile_specs = [groups[name] for name in order]
-    if profile_specs:
-        return profile_specs
-
-    # Fallback: Elim / custom product-only specs stored in custom_specs_json
+    # Product-only ("custom") specs in custom_specs_json: either rows inside one of the
+    # profile's own groups (groupId = that group's id) or rows of a product-only group.
     product = db.get(CatalogProduct, catalog_product_id)
-    if not product or not product.custom_specs_json:
-        return []
-    try:
-        raw = json.loads(product.custom_specs_json)
-    except json.JSONDecodeError:
-        return []
+    raw: Any = None
+    if product and product.custom_specs_json:
+        try:
+            raw = json.loads(product.custom_specs_json)
+        except json.JSONDecodeError:
+            raw = None
     custom_groups = raw.get("customGroups") if isinstance(raw, dict) else None
     custom_attrs = raw.get("customAttrs") if isinstance(raw, dict) else None
-    if not isinstance(custom_groups, list) or not isinstance(custom_attrs, list):
-        return []
-    out: list[StorefrontSpecGroupRead] = []
-    for group in custom_groups:
-        if not isinstance(group, dict):
-            continue
-        gid = group.get("id")
-        gname = (group.get("name") or "Specifications").strip() or "Specifications"
-        specs: list[StorefrontSpecItemRead] = []
+    if not isinstance(custom_groups, list):
+        custom_groups = []
+    if not isinstance(custom_attrs, list):
+        custom_attrs = []
+
+    def _attr_items(gid: Any) -> list[StorefrontSpecItemRead]:
+        items: list[StorefrontSpecItemRead] = []
         for attr in custom_attrs:
             if not isinstance(attr, dict) or attr.get("groupId") != gid:
                 continue
             label = (attr.get("name") or "").strip()
             value = (attr.get("value") or "").strip()
             if label and value:
-                specs.append(StorefrontSpecItemRead(label=label, value=value))
-        if specs:
-            out.append(StorefrontSpecGroupRead(name=gname, specs=specs))
-    return out
+                items.append(StorefrontSpecItemRead(label=label, value=value))
+        return items
+
+    custom_gids = {g.get("id") for g in custom_groups if isinstance(g, dict)}
+    # a profile group that has only custom rows has no value row above, so look it up by id
+    for a in custom_attrs:
+        gid = a.get("groupId") if isinstance(a, dict) else None
+        if isinstance(gid, str) and gid not in custom_gids and gid not in gid_to_name:
+            g = db.get(CatalogAttributeGroup, gid)
+            if g:
+                gid_to_name[gid] = g.name
+    for gid, gname in gid_to_name.items():
+        if gid in custom_gids:
+            continue
+        items = _attr_items(gid)
+        if not items:
+            continue
+        if gname not in groups:
+            groups[gname] = StorefrontSpecGroupRead(name=gname, specs=[])
+            order.append(gname)
+        have = {(i.label, i.value) for i in groups[gname].specs}
+        for it in items:
+            if (it.label, it.value) not in have:
+                groups[gname].specs.append(it)
+                have.add((it.label, it.value))
+
+    for group in custom_groups:
+        if not isinstance(group, dict):
+            continue
+        items = _attr_items(group.get("id"))
+        if not items:
+            continue
+        gname = (group.get("name") or "Specifications").strip() or "Specifications"
+        if gname in groups:
+            groups[gname].specs.extend(items)
+            continue
+        groups[gname] = StorefrontSpecGroupRead(name=gname, specs=items)
+        after = group.get("after")
+        if after == "":
+            order.insert(0, gname)
+        elif isinstance(after, str) and after.strip() in order:
+            order.insert(order.index(after.strip()) + 1, gname)
+        else:
+            order.append(gname)
+    return [groups[name] for name in order]
 
 
 def _parse_variant_options(raw: Optional[str]) -> list[StorefrontVariantOptionRead]:
