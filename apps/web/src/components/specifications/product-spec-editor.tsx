@@ -1303,12 +1303,10 @@ function CompactValueInput({ attr, value, onChange, predefinedValues, displayVal
     </button>
   ) : null;
   const overrideBox = overrideShown ? (
-    <input
-      type="text"
+    <ExpandableTextInput
       value={displayValue}
-      onChange={(e) => onDisplayChange?.(e.target.value)}
+      onChange={(v) => onDisplayChange?.(v)}
       placeholder={`Shown on the product page instead of "${value}" (the filter keeps "${value}")`}
-      className="h-6 w-full rounded-none border border-input bg-background px-1.5 text-[11px] outline-none focus:border-primary"
     />
   ) : null;
 
@@ -1334,12 +1332,10 @@ function CompactValueInput({ attr, value, onChange, predefinedValues, displayVal
           ))}
         </div>
         {value ? (
-          <input
-            type="text"
+          <ExpandableTextInput
             value={displayValue}
-            onChange={(e) => onDisplayChange?.(e.target.value)}
+            onChange={(v) => onDisplayChange?.(v)}
             placeholder={attr.unit ? `Exact value (${attr.unit}) — shown on the product page` : "Exact value — shown on the product page"}
-            className="h-6 w-full rounded-none border border-input bg-background px-1.5 text-[11px] outline-none focus:border-primary"
           />
         ) : null}
       </div>
